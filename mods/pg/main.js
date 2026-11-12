@@ -2,6 +2,8 @@ import * as fs from "fs/promises";
 import { View } from "gpui-kit";
 import { h_flex, EditorState, InputState } from "gpui-base";
 import { appHome, exec, home, notify, props, run, setShared, shared, spaces, theme, watchFolder } from "herdr";
+import { fixable } from "./ai.js";
+import { Assistant } from "./assistant.js";
 import { Panel } from "./panel.js";
 import {
   LIST_DATABASES_SQL,
@@ -58,6 +60,11 @@ const holders = new Set();
 const resultsDir = () => `${appHome()}/data/pg`;
 const forget = (file) => (file ? fs.unlink(file).catch(() => {}) : Promise.resolve());
 
+// psql's whole message stays on the error: an agent asked to fix the query reads it.
+function queryFailed(stderr) {
+  return Object.assign(new Error(errorMessage(stderr)), { detail: stderr.trim(), fixable: fixable(stderr) });
+}
+
 // For a person's query: psql writes the rows to a file, which skips exec's 8 MiB output cap and
 // keeps a result too big for Herdr whole, to save. Returns the file.
 async function runQuery(database, sql) {
@@ -66,7 +73,7 @@ async function runQuery(database, sql) {
   await fs.mkdir(dir, { recursive: true });
   try {
     const result = await exec("psql", psqlArgs(parseServer(currentServer()), database, sql, file), { timeout: QUERY_MS }).catch(execFailed);
-    if (result.code !== 0) throw new Error(errorMessage(result.stderr));
+    if (result.code !== 0) throw queryFailed(result.stderr);
     return file;
   } catch (e) {
     await forget(file);
@@ -113,6 +120,15 @@ export default class Pg extends View {
     this.edit = null;
     this.serverError = null;
     this.ui = { hover: null, menu: null, moving: null, deleting: null };
+    this.ai = new Assistant(this);
+    this.ai.loadAgents(cx);
+    // The open request box: "new" for a query to write, else the id of the query to edit.
+    this.asking = null;
+    this.askNew = InputState.new({ placeholder: "Describe the query you want, in your own words" });
+    this.askEdit = InputState.new({ placeholder: "What should be different in its results?" });
+    for (const input of [this.askNew, this.askEdit]) {
+      input.on("submit", (_e, cx) => { if (this.askInput() === input) this.submitAsk(cx); });
+    }
 
     this.serverInput = InputState.new({ placeholder: "user@host:port" });
     this.editInput = InputState.new({});
@@ -166,13 +182,15 @@ export default class Pg extends View {
     this.closed = true;
     this.wake?.();
     if (this.panel) return;
-    await Promise.all([this.file?.save(), this.releaseCells()]);
+    await Promise.all([this.file?.save(), this.releaseCells(), this.ai.stopAll()]);
   }
 
   // ── Server and databases ───────────────────────────────────────────────────
 
   connect(database, cx) {
     this.file?.save();
+    this.ai.stopAll();
+    this.asking = null;
     this.load++;
     this.databases = [];
     this.databasesError = null;
@@ -381,7 +399,8 @@ export default class Pg extends View {
     // `held`: what its result keeps in memory. `cut`: set when the result did not fit, as
     // { bytes, file, saved, saving, choice: "ask" | "show" | "drop" }; `file` is psql's whole result.
     // `temp`: psql's file while the result is being read.
-    const cell = { id: query.id, running: false, result: null, error: null, ms: null, token: 0, edWidth: null, focused: false, held: NOTHING, cut: null, temp: null };
+    // `fixable`: the server refused the query itself, so an agent may fix it; `errorDetail` is psql's whole message.
+    const cell = { id: query.id, running: false, result: null, error: null, errorDetail: null, fixable: false, ms: null, token: 0, edWidth: null, focused: false, held: NOTHING, cut: null, temp: null };
     holders.add(cell);
     cell.editor = EditorState.new({
       language: "sql", value: query.sql, font_family: mono(), font_size: 13.5, line_numbers: false, folding: false, soft_wrap: true, syntax: syntax(theme()),
@@ -439,6 +458,8 @@ export default class Pg extends View {
     this.dropResult(cell);
     cell.running = true;
     cell.error = null;
+    cell.errorDetail = null;
+    cell.fixable = false;
     cx.notify();
     this.spawn(cx, async (cx) => {
       let file = null;
@@ -472,6 +493,8 @@ export default class Pg extends View {
         cell.error = e === null || /out of memory/i.test(messageOf(e))
           ? "Herdr ran out of memory for this result. Discard other big results, then run it again."
           : messageOf(e);
+        cell.errorDetail = e?.detail ?? null;
+        cell.fixable = Boolean(e?.fixable);
         cell.result = null;
         cell.held = NOTHING;
       } finally {
@@ -583,6 +606,8 @@ export default class Pg extends View {
 
   removeQuery(query, cx) {
     const { nbId } = this;
+    this.ai.stop(query.id);
+    if (this.asking === query.id) this.asking = null;
     this.change((d) => nb.removeQuery(d, nbId, query.id, now()), cx);
     this.syncCells();
     cx.notify();
@@ -599,6 +624,54 @@ export default class Pg extends View {
     const { nbId } = this;
     this.change((d) => nb.updateQuery(d, nbId, query.id, { measure }, now()), cx);
     cx.notify();
+  }
+
+  // ── Asking an agent ────────────────────────────────────────────────────────
+
+  askInput(target = this.asking) {
+    return target === "new" ? this.askNew : target ? this.askEdit : null;
+  }
+
+  // Its button again closes the box.
+  openAsk(target, cx) {
+    if (this.edit) this.finishEdit(this.edit.key !== "server", cx, false);
+    this.closeMenus();
+    if (this.asking === target) {
+      this.closeAsk(cx);
+      return;
+    }
+    this.asking = target;
+    const input = this.askInput(target);
+    input.set_value("");
+    input.focus();
+    cx.notify();
+  }
+
+  closeAsk(cx) {
+    this.asking = null;
+    this.handle.focus();
+    cx.notify();
+  }
+
+  // A query to write starts as the request in a comment, so it is not lost if the agent fails.
+  submitAsk(cx) {
+    const target = this.asking;
+    const request = this.askInput(target)?.value().trim();
+    if (!request) return;
+    this.closeMenus();
+    this.closeAsk(cx);
+    if (target !== "new") {
+      this.ai.start("edit", target, request, cx);
+      return;
+    }
+    const notebook = this.notebook();
+    if (!notebook) return;
+    const id = nb.newId("q");
+    const sql = request.split("\n").map((line) => `-- ${line}`).join("\n");
+    this.change((d) => nb.addQuery(d, notebook.id, nb.newQuery(id, sql), now()), cx);
+    this.syncCells();
+    this.active = id;
+    this.ai.start("write", id, request, cx);
   }
 
   // ── Inline text fields ─────────────────────────────────────────────────────
@@ -735,6 +808,8 @@ export default class Pg extends View {
       this.finishEdit(false, cx, true);
     } else if (this.ui.menu || this.ui.moving || this.ui.deleting) {
       this.closeMenus(cx);
+    } else if (this.asking) {
+      this.closeAsk(cx);
     } else if (this.typingFilter) {
       this.filterInput.set_value("");
       this.tableFilter = "";

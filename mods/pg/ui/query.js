@@ -8,6 +8,7 @@ import { defaultView, formatBytes, formatNumber } from "../shape.js";
 import { chart, chartData, chartPlans } from "./chart.js";
 import { summary, summaryLines } from "./summary.js";
 import { columnWidths, printedTable } from "./table.js";
+import { composer, doneLine, editButton, fixButton, jobStrip } from "./ai.js";
 import { CLEAR, SERIF, alpha, button, icon, keepFocus, mono } from "./kit.js";
 
 const VIEWS = [["table", "Table"], ["chart", "Chart"], ["summary", "Summary"]];
@@ -105,11 +106,13 @@ function sqlBlock(cell, t) {
     .child(Editor.new(cell.editor).size_full()));
 }
 
-function errorBlock(cell, t) {
+// A query the server refused can go to an agent to fix, unless one is already on it.
+function errorBlock(view, query, cell, canFix, t) {
   return v_flex().gap(6)
     .child(h_flex().gap(8).items_center().text_size(13.5).font_medium().text_color(t.ansi1)
       .child(div().size(7).rounded_full().bg(t.ansi1)).child("The query failed"))
-    .child(div().pl(15).text_size(13).font_family(mono()).text_color(alpha(t.ansi1, 0.85)).child(cell.error));
+    .child(div().pl(15).text_size(13).font_family(mono()).text_color(alpha(t.ansi1, 0.85)).child(cell.error))
+    .when(canFix, (e) => e.child(h_flex().pl(15).pt(4).child(fixButton(view, query, t))));
 }
 
 export function querySection(view, query, cell, t) {
@@ -118,6 +121,7 @@ export function querySection(view, query, cell, t) {
   const result = asking ? null : cell.result;
   const hasRows = Boolean(result) && result.rows.length > 0;
   const mode = hasRows ? viewOf(query, result) : null;
+  const job = view.ai.jobOf(query.id);
   return v_flex().id(`pg-q-${query.id}`).flex_none().gap(14)
     .on_key_down((e, cx) => {
       if (e.keystroke !== "cmd-enter" && e.keystroke !== "ctrl-enter") return;
@@ -131,9 +135,13 @@ export function querySection(view, query, cell, t) {
         .hover((st) => st.bg(t.hover)).tooltip("Remove this query")
         .on_click((_e, cx) => view.removeQuery(query, cx))
         .child(icon("close", 13, t.dim)))
-      .child(runButton(view, cell, t)))
+      .child(runButton(view, cell, t))
+      .child(editButton(view, query, t)))
+    .when(view.asking === query.id, (e) => e.child(composer(view, query.id, t)))
+    .when(Boolean(job) && !job.done, (e) => e.child(jobStrip(view, query, job, t)))
     .child(sqlBlock(cell, t))
-    .when(Boolean(cell.error), (e) => e.child(errorBlock(cell, t)))
+    .when(Boolean(job?.done), (e) => e.child(doneLine(view, query, job, t)))
+    .when(Boolean(cell.error), (e) => e.child(errorBlock(view, query, cell, cell.fixable && (!job || Boolean(job.done || job.failed)), t)))
     .when(asking, (e) => e.child(askBlock(view, query, cell, t)))
     .when(choice === "drop", (e) => e.child(div().text_size(13).text_color(t.muted)
       .child(`Discarded a ${formatBytes(cell.cut.bytes)} result.${cell.cut.saved ? ` All of it is in ${shortPath(cell.cut.saved)}.` : ""}`)))

@@ -3,6 +3,7 @@ import { div } from "gpui-kit";
 import { h_flex, v_flex, Input } from "gpui-base";
 import { folderPath } from "../notebooks.js";
 import { querySection } from "./query.js";
+import { askButton, composer } from "./ai.js";
 import { SERIF, button, icon, keepFocus } from "./kit.js";
 
 export function page(view, t) {
@@ -45,7 +46,11 @@ function body(view, t) {
         .when(path.length > 0, (e) => e.child(div().text_size(13.5).text_color(t.muted).child(path.join(" / "))))
         .child(div().max_w(640).text_size(14).line_height("150%").text_color(t.muted).child("Read-only. Nothing here can change the database.")))
       .when(sections.length > 0, (e) => e.child(button("pg-run-all", t).on_click((_e, cx) => view.runAll(cx)).child(icon("play", 11, t.muted)).child("Run all"))),
-    ...(sections.length > 0 ? sections : [div().text_size(14).text_color(t.muted).child("Click a table on the left, or add a query.")]),
-    h_flex().child(button("pg-add", t).on_click((_e, cx) => view.addQuery("select ", cx)).child(icon("plus", 12, t.muted)).child("Add a query")),
+    ...(sections.length > 0 ? sections : [div().text_size(14).text_color(t.muted).child("Click a table on the left, add a query, or ask AI to write one.")]),
+    view.asking === "new"
+      ? composer(view, "new", t)
+      : h_flex().gap(4)
+        .child(button("pg-add", t).on_click((_e, cx) => view.addQuery("select ", cx)).child(icon("plus", 12, t.muted)).child("Add a query"))
+        .child(askButton(view, t)),
   ];
 }
