@@ -4,8 +4,6 @@
 
 A Postgres browser mod for the [Herdr app](https://herdr.dev). Keep notebooks of SQL queries for each database, sort them into folders, and see each result as a table, a chart or a summary of its columns. When you'd rather not write the SQL yourself, ask the coding agent you already use: it writes a query from plain words, fixes one the server refused, or changes what a result shows.
 
-![Postgres Notebook](preview.png)
-
 ![Demo: ask the agent for orders per day, run the query and change its chart](demo.gif)
 
 ## Charts
