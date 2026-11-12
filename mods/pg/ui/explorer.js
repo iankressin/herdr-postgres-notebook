@@ -34,7 +34,6 @@ function server(view, t) {
 }
 
 function databases(view, t) {
-  const spinning = view.loadingTables;
   return v_flex().flex_none().pt(8)
     .when(view.databases.length === 0 && !view.databasesError, (e) => e.child(div().px(8).py(6).text_size(12.5).text_color(t.dim).child("Loading databases…")))
     .child(v_flex().id("pg-dbs").max_h(30 * 7).overflow_y_scrollbar().gap(2).children(view.databases.map((name) => {
@@ -42,10 +41,7 @@ function databases(view, t) {
       return row().id(`pg-db-${name}`).cursor_pointer().when(on, (e) => e.bg(t.selected)).hover((st) => st.bg(on ? t.selected : t.hover))
         .on_click((_e, cx) => view.goToDatabase(name, cx))
         .child(icon("database", 15, on ? t.accent : t.dim))
-        .child(div().flex_1().min_w(0).truncate().text_size(13.5).when(on, (e) => e.font_medium()).text_color(on ? t.foreground : t.muted).child(name))
-        .when(on, (e) => e.child(div().id("pg-refresh").size(22).flex_none().flex().items_center().justify_center().rounded(6).hover((st) => st.bg(t.hover))
-          .tooltip("Load again").on_click((_e, cx) => { cx.stop_propagation(); view.refresh(cx); })
-          .child(spinning ? icon("spinner", 12, t.muted).spin(900) : icon("refresh", 12, t.muted))));
+        .child(div().flex_1().min_w(0).truncate().text_size(13.5).when(on, (e) => e.font_medium()).text_color(on ? t.foreground : t.muted).child(name));
     })));
 }
 
@@ -140,7 +136,12 @@ function tables(view, t) {
   const state = view.tables;
   const groups = groupBySchema(filterTables(state.list, view.tableFilter));
   return v_flex().flex_none()
-    .child(h_flex().px(8).pt(20).pb(6).child(heading("Tables", t)))
+    .child(h_flex().px(8).pt(20).pb(6).gap(2).items_center()
+      .child(heading("Tables", t))
+      .child(div().id("pg-refresh").size(22).flex_none().flex().items_center().justify_center().rounded(6).cursor_pointer()
+        .hover((st) => st.bg(t.hover)).tooltip("Reload tables")
+        .on_click((_e, cx) => view.refresh(cx))
+        .child(view.loadingTables ? icon("spinner", 12, t.muted).spin(900) : icon("refresh", 12, t.muted))))
     .child(keepFocus(h_flex().id("pg-filter").h(32).px(10).gap(8).items_center().rounded(9).bg(t.background).border_1()
       .border_color(view.typingFilter ? t.accent : CLEAR).cursor_text()
       .child(icon("search", 13, view.typingFilter ? t.accent : t.dim))

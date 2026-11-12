@@ -11,9 +11,9 @@ The tab has two parts side by side.
 **Explorer** (left, 272px, `theme().chrome`), top to bottom:
 
 1. **Server.** One line in mono, 12.5px, showing `user@host:port`, with a small pencil. A click turns it into a text field with an accent border. Under the field, dim text says "Enter connects. Esc cancels." A bad value shows "Use user@host:port, for example app@localhost:5432." in `ansi1`.
-2. **Databases.** One 30px row each, with a database icon at 15px. The open one has a `selected` background, an accent icon and a reload button. The list scrolls past seven rows.
+2. **Databases.** One 30px row each, with a database icon at 15px. The open one has a `selected` background and an accent icon. The list scrolls past seven rows.
 3. **Notebooks.** A heading with two icon buttons, + (new notebook) and folder-plus (new folder). Below it is a tree of 30px rows, indented 16px a level: chevron (folders only), folder, open folder or page icon at 14px, then the name. Folders come first, then notebooks, each sorted by name without regard to case. The open notebook has a `selected` background. A "…" button shows on hover.
-4. **Tables.** A filter field (32px, `theme().background`, accent border while typing). Under it are schema groups, and table rows with their size on disk in mono, 11px. A chevron shows a table's columns, each with a type mark and a key for primary-key columns.
+4. **Tables.** The heading has a reload button, a 22px square with a 12px arrow that turns into a spinner while loading. Below the heading is a filter field (32px, `theme().background`, accent border while typing). Under it are schema groups, and table rows with their size on disk in mono, 11px. A chevron shows a table's columns, each with a type mark and a key for primary-key columns.
 
 **Notebook page** (right, `theme().background`, 56px side padding, content at most 1040px wide, 44px between sections):
 
@@ -28,9 +28,9 @@ The tab has two parts side by side.
 ## How it behaves
 
 - **Opening.** Tab props are `{ database, notebook? }`. A tab opens `notebook` if given, else the database's last opened notebook, else the first one. Opening a notebook runs all its queries at once, and each result shows as it lands. A database with no notebook file gets an **Overview** notebook with two queries on Postgres's own catalog: "Tables by size" and "Settings by category".
-- **Databases.** A click on another database goes to that database's tab, or opens one named `pg: <database>`. The reload button reads the databases and tables again.
+- **Databases.** A click on another database goes to that database's tab, or opens one named `pg: <database>`.
 - **Server.** Enter on a good value saves it to the shared key `pg.server`, and every pg tab follows. Each server keeps its own notebooks.
-- **Tables.** A click adds `select * from schema.table limit 100` to the open notebook and runs it. With no notebook open, it first makes one named after the table. A click on a column adds its name to the query you last edited.
+- **Tables.** A tab reads its tables once, when it opens. The reload button by the Tables heading reads the databases, tables and sizes again, after a dbt run for example. A click on a table adds `select * from schema.table limit 100` to the open notebook and runs it. With no notebook open, it first makes one named after the table. A click on a column adds its name to the query you last edited.
 - **Tree.** A folder row or its chevron folds the folder open or shut. A notebook row opens it. A right-click, or the "…" button, opens a menu under the row (180px, `popover`) with Rename, Move to…, Duplicate (notebooks only) and Delete:
   - Rename turns the row into a text field. Enter or a click elsewhere saves. Esc cancels. An empty name is refused.
   - Move to… opens a small list under the row: "Top level" and every folder. It leaves out the item itself and anything inside it, and marks the current place with "here".
