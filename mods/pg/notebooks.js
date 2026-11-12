@@ -25,7 +25,7 @@ const childId = (prefix, parent, i) => `${prefix}_${parent.slice(2)}${i.toString
 
 export const emptyDoc = (server, database) => ({ version: VERSION, server, database, lastOpened: null, folders: [], notebooks: [] });
 
-export const newQuery = (id, sql, title = "") => ({ id, title, sql, view: null, measure: null });
+export const newQuery = (id, sql, title = "") => ({ id, title, sql, view: null, measure: null, chart: null, series: null });
 
 export const serialize = (doc) => `${JSON.stringify(doc, null, 2)}\n`;
 
@@ -71,6 +71,8 @@ export function parseDoc(raw) {
             sql: text(q.sql, `${qwhat}'s SQL`),
             view: VIEWS.includes(q.view) ? q.view : null,
             measure: typeof q.measure === "string" ? q.measure : null,
+            chart: typeof q.chart === "string" ? q.chart : null,
+            series: Array.isArray(q.series) && q.series.every((s) => typeof s === "string") ? q.series : null,
           };
         }),
       };
@@ -243,7 +245,8 @@ export function removeQuery(doc, notebook, query, now) {
   return withNotebook(doc, notebook, (n) => ({ ...n, queries: n.queries.filter((q) => q.id !== query) }), now);
 }
 
-// `change` holds any of title, sql, view and measure.
+// `change` holds any of title, sql, view, measure, chart and series. Columns are saved by name,
+// so the choices survive the columns moving around.
 export function updateQuery(doc, notebook, query, change, now) {
   const old = notebookOf(doc, notebook)?.queries.find((q) => q.id === query);
   if (!old || Object.entries(change).every(([k, v]) => old[k] === v)) return doc;

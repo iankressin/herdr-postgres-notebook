@@ -50,15 +50,20 @@ The tab has two parts side by side.
 - **Titles.** A click on the page title or a query title edits it in place. A query title left empty, or the same as the automatic one, stays automatic. The automatic title is the table the query reads, in words ("Order items").
 - **Big results.** A query runs until it ends, up to the 10 minutes Herdr allows any program. One result holds at most 50,000 rows, 250,000 values and 16 MB of text. Every result in every pg tab holds at most 400,000 values and 24 MB together, and the room goes to whichever result is read first. A result that does not fit keeps psql's file and asks: Show the first rows (already read, so it shows at once), Save all as CSV (moves the file to `~/Downloads/<title>.csv`, adding " 2", " 3" when the name is taken), or Discard (deletes the file). Running the query again or closing the tab deletes it too, and files a day old go when a tab opens.
 - **Views.** Until you pick one, a result that charts well, with more than one row, opens as Chart. Anything else opens as Table. Your pick is saved with the query.
-- **Charts** come from column kinds only:
-  - a number over a date: bars on a real time axis;
-  - a number per text label: horizontal bars, largest first, top 16, then "and N more, smaller";
-  - two numbers: a scatter;
-  - one number: a 20-range histogram;
-  - text only: rows per value;
-  - dates only: rows over time.
+- **Charts.** A row of buttons above each chart picks its type: **Auto**, then an icon for each type that fits the result, named in its tooltip. The pick is saved with the query. A saved type that no longer fits falls back to Auto, and the chart says "<Name> does not fit this result." Numbers here are number columns that are not ids. The x is the first date column, else the best text label, else the first of two or more numbers.
+  - **Bars:** a label and a number. Horizontal, largest first, the 16 furthest from zero, then "and N more, smaller". With a negative value, bars grow both ways from a zero line, gains in `ansi2` and losses in `ansi1`.
+  - **Columns:** an x and a number. On a date or number axis each column stands at its value. On labels they share the width in row order, at most 60.
+  - **Stacked columns** and **Grouped columns:** an x and two or more numbers. Stacks put negative values below zero. Grouped columns share the width evenly, at most 40 positions.
+  - **100% bars:** a label and two or more numbers. Each bar is split into shares, printed where 9% or more.
+  - **Line**, **Area** and **Step:** an x and a number. Past 240 points, a date or number axis is averaged into 240 slices (Step keeps each slice's last value). Area washes the line down to zero at 12%.
+  - **Running total:** a date or number x and a number.
+  - **Scatter** (two numbers) and **Bubbles** (three; the third sets the dot's size). When the result has a category column, the three biggest groups get colors and the rest are "Other". At most 500 dots.
+  - **Histogram:** a number, in 20 ranges.
+  - **Count:** rows per text value, else rows over time.
+  - **Big numbers:** one row with numbers, a tile per number, up to 8.
+  - **Table with bars:** a label and two or more numbers. Each row shows the label, up to four other numbers, then a bar for the measure.
 
-  Identifiers, code, prose and URLs never become an axis. When there are several numbers, **Measure** chips pick one, and the chip saves the column's name. Bars are at most 24px thick, 2px apart, rounded 4px at the data end. Gridlines sit at 0, 50% and 100%, with a 52px y-axis. Every bar and dot has a tooltip. One series uses one color: `ansi4`, and `accent` on hover. When two time points are closer than a fiftieth of the span, they are summed into 50 equal slices, and the chart says so.
+  **Auto** picks Big numbers for one row, Columns when there is a date, Bars when there is a label, Scatter for two numbers, Histogram for one, and Count for text or dates alone. Identifiers, code, prose and URLs never become an axis or a series. One-number charts show **Measure** chips. Several-number charts show **Numbers** chips that turn series on and off, one to six. Both save column names. A series' color is its place among the numbers, from `ansi4, ansi3, ansi5, ansi6, ansi2, ansi1`, so it keeps its color when another is turned off. Bars are at most 24px thick, 2px apart, rounded 4px at the data end. Gridlines sit at 0, 50% and 100%, with a 52px y-axis. Every mark has a tooltip, and lines have a full-height hover column per point. On a date or number axis, columns are summed into equal slices when two points are closer than a fiftieth of the span. Evenly spaced points are summed a whole number at a time, so no slice holds an extra one. The chart says when it sums or averages.
 - **Summary.** One line per column: name, what it holds (numbers, dates, yes or no, JSON, code, categories, identifiers, text), filled %, distinct count, then range and average, or the most common value.
 - **Table.** Rules above and below, no vertical lines. Numbers sit on the right in mono. Ids and code are in mono and muted. Dates read as "Nov 11 · 21:05". Empty values show "—". Booleans read as true or false.
 - **Asking an agent.**
@@ -80,7 +85,7 @@ The tab has two parts side by side.
   - `logic.js` holds the server text, psql arguments, CSV (`readCsv` stops after a number of values and says where to go on), catalog SQL and quoting.
   - `result.js` reads a result a slice at a time within the room left, and names the saved file.
   - `notebooks.js` holds the file shape, ids, the path rule, checking a file, tree steps and sorting.
-  - `shape.js` holds value kinds, column profiles, chart choice, time slices, histograms and formatting.
+  - `shape.js` holds value kinds, column profiles, the table of chart types (`CHARTS`), parsed columns and axis groups, each chart's data, and formatting. `ui/chart.js` has one drawer per chart type.
   - `store.js` holds reading and writing the file.
   - `main.js` holds the view's state and actions.
   - `ai.js` holds the brief, reading the answer, the agent's phase and which errors are fixable; `ai.test.js` tests it.
@@ -91,8 +96,8 @@ The tab has two parts side by side.
 - **Agents:** `hc run` starts one per job (see How it behaves); `hc kill` stops it.
 - **herdr:** `knownAgents`, `hc`, `terminals`, `run("terminal.peek")`, `exec`, `readTextFile`, `writeTextFile` (with `expected`), `watchFolder`, `notify`, `appHome`, `home`, `shared`/`setShared` (`pg.server`, `pg.agent`), `run` (`tab.select`, `tab.new`), `spaces`, `theme`, `settings`, `props`.
 - **gpui-base:** `EditorState`/`Editor` (SQL, soft wrap), `InputState`/`Input`, `v_virtual_list` with `Scrollbar` (the result table), and `Popup` (the row menu, anchored `top_right`; the agent menu, anchored `top_left`).
-- **File shape (version 1):** `{ version, server, database, lastOpened, folders: [{id, name, parent, open}], notebooks: [{id, name, folder, created, updated, queries: [{id, title, sql, view, measure}]}] }`. `view` is null, "table", "chart" or "summary". `measure` is a column name or null.
-- **Art:** `icons/*.svg` (24 viewBox, stroke 2, round caps, `currentColor`). `fonts/` holds Source Serif 4 Regular and Semibold (SIL OFL, `fonts/OFL.md`).
+- **File shape (version 1):** `{ version, server, database, lastOpened, folders: [{id, name, parent, open}], notebooks: [{id, name, folder, created, updated, queries: [{id, title, sql, view, measure, chart, series}]}] }`. `view` is null, "table", "chart" or "summary". `measure` is a column name or null. `chart` is a chart type's key, or null for Auto. `series` is a list of column names, or null for the first four numbers.
+- **Art:** `icons/*.svg` (24 viewBox, stroke 2, round caps, `currentColor`), with one `icons/chart-<key>.svg` per chart type. `fonts/` holds Source Serif 4 Regular and Semibold (SIL OFL, `fonts/OFL.md`).
 
 ## Watch out
 
@@ -101,7 +106,8 @@ The tab has two parts side by side.
 - The mod's script engine ignores `localeCompare` options and compares by code point. Sort on `toLowerCase()`. A Node test will not catch this.
 - The engine is far slower than Node at character loops and regexes. Parse CSV with `indexOf`, not character by character. Base the column guesses (ids, code, prose, labels) on the first 2,000 rows, and count filled and distinct values over all rows. Read times by position, not with regexes. `Math.min(...values)` overflows on a few hundred thousand values, so use a loop.
 - The engine stops a task that runs more than about half a second without an `await`, and says nothing: the query just stays on "Running". Read a result in slices with `await cx.sleep(0)` between them.
-- A `render` that runs past about 50 ms is interrupted, and the tab shows "This view could not be re-rendered". So work out column widths, the summary and the chart for every measure in the task, before the result shows, and let `render` only read them.
+- A `render` that runs past about 50 ms is interrupted, and the tab shows "This view could not be re-rendered". So the task works out column widths and the summary, parses each chart column into a typed array, and groups the rows once per axis, before the result shows. Every chart is then worked out from those small arrays. The engine is QuickJS, where one loop over 50,000 items takes 7 to 15 ms, so even that is too slow while drawing a big result. A chart over more than about 120 values is worked out on the view's worker, and the page says "Drawing…" meanwhile. The query's saved chart is worked out in the task, so it shows at once.
+- Lines and areas are drawn with `window.paint_path`. In a `PathBuilder.fill()` shape, a second `move_to` starts a new shape, and `close()` then cuts straight back to the line's start. Draw an area as one outline: from zero, along the line, and back down to zero.
 - All of Herdr's mods share one script heap of about 200 MB. Past it, the engine throws "out of memory", or `null` when it cannot even build the error. `fs.readFile` refuses files over 64 MiB. Hence the limits above, counted across tabs in module scope, which every copy of the mod shares.
 - Every pg tab runs in the same engine, so code that runs after an `await` can be inside another tab's call. A task started there belongs to that tab and redraws it, and `cx.spawn(…, { owner: this })` throws. Run every task on one worker started in `init`, whose `cx` stays with its own view.
 - Saving a mod file reloads it, and the replaced build gets no `close()`: its results stay in memory until Herdr restarts. Restart after editing the mod a lot.
@@ -127,7 +133,7 @@ The tab has two parts side by side.
 2. On any database: make two folders, one inside the other; make three notebooks; rename one; move one into the inner folder; duplicate one; delete the outer folder and see its contents move up; delete a notebook after the inline question.
 3. After quitting and restarting Herdr, the folders, notebooks, queries, chosen views and measures are all there, and the tab opens on the last notebook.
 4. Two tabs on the same database: a rename in one shows in the other within two seconds.
-5. Each of the six chart types appears for a query of that shape. A failing query shows its error. An empty result shows "No rows."
+5. Each of the 15 chart types draws for a query it fits, and the picker offers only the types that fit. A failing query shows its error. An empty result shows "No rows."
 6. A query returning 60,000 rows asks whether to show its first 50,000. Show draws them as a chart without "This view could not be re-rendered". Save all as CSV puts the whole result in `~/Downloads`. Discard deletes its file. A 2-million-row query in the same notebook gets the room that is left. A query that runs for 12 seconds finishes.
 7. Changing the server in the explorer switches to that server's notebooks.
 8. `node --test` passes `ai.test.js`.

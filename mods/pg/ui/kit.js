@@ -32,14 +32,5 @@ export const iconButton = (id, name, t, size = 22) => div().id(id).size(size).fl
   .hover((st) => st.bg(t.hover))
   .child(icon(name, Math.round(size * 0.55), t.muted));
 
-// A result is drawn many times; anything worked out from all its rows is worked out once.
-const derived = new WeakMap();
-export function memo(result, key, work) {
-  let known = derived.get(result);
-  if (!known) derived.set(result, (known = new Map()));
-  if (!known.has(key)) known.set(key, work());
-  return known.get(key);
-}
-
 // Clicks inside a field keep the keyboard there instead of letting the page take it.
 export const keepFocus = (el) => el.on_mouse_down("left", (_e, cx) => cx.stop_propagation());

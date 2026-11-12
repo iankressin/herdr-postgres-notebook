@@ -4,8 +4,8 @@ import { div } from "gpui-kit";
 import { h_flex, v_flex, Editor, Input } from "gpui-base";
 import { home } from "herdr";
 import { queryTitle } from "../notebooks.js";
-import { defaultView, formatBytes, formatNumber } from "../shape.js";
-import { chart, chartData, chartPlans } from "./chart.js";
+import { chartPreparations, defaultView, formatBytes, formatNumber, plan } from "../shape.js";
+import { chart, prepareChart } from "./chart.js";
 import { summary, summaryLines } from "./summary.js";
 import { columnWidths, printedTable } from "./table.js";
 import { composer, doneLine, editButton, fixButton, jobStrip } from "./ai.js";
@@ -55,13 +55,18 @@ function askBlock(view, query, cell, t) {
 
 export const viewOf = (query, result) => query.view ?? defaultView(result);
 
-// What the table, the summary and every chart work out from all the rows, as separate steps.
+// What the table, the summary and the charts work out from all the rows, as separate steps.
 // The page runs them in a task before it shows the result: Herdr interrupts a render that runs
-// past about 50 ms, and a pass over 50,000 rows takes longer than that.
-export const preparations = (result) => [
+// past about 50 ms, and a pass over 50,000 rows takes longer than that. The query's own chart
+// is worked out last, so it shows at once; other charts take their turn on the view's worker.
+export const preparations = (result, query) => [
   () => columnWidths(result),
   () => summaryLines(result),
-  ...chartPlans(result).map((p) => () => chartData(result, p)),
+  ...chartPreparations(result),
+  () => {
+    const p = plan(result, query);
+    if (p) prepareChart(result, p);
+  },
 ];
 
 function title(view, query, t) {

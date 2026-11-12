@@ -2,8 +2,8 @@
 // identifiers and code in mono, the rest as text. No pills, chips or pictures inside cells.
 import { div } from "gpui-kit";
 import { h_flex, v_flex, v_virtual_list, Scrollbar } from "gpui-base";
-import { arrayItems, formatNumber, jsonPreview, naturalTime } from "../shape.js";
-import { alpha, memo, mono } from "./kit.js";
+import { arrayItems, formatNumber, jsonPreview, memo, naturalTime } from "../shape.js";
+import { alpha, mono } from "./kit.js";
 
 const ROW = 36;
 

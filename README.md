@@ -29,6 +29,10 @@ Limits:
 - An answer took 15 to 20 seconds in our tests. The agent reads the schema and checks its query before it answers; a big schema takes longer.
 - The agent has a shell. Only its brief and the read-only connection string keep it from writing to the database, and the session's read-only setting is a default, not a lock (see below). For a database that matters, connect as a role that can only read: on Postgres 14 or later, one granted `pg_read_all_data` and nothing more.
 
+## Charts
+
+A result that charts well opens as a chart. A row of buttons above it picks the chart: **Auto**, or any type that fits the result. There are 15: bars, columns, stacked columns, grouped columns, 100% bars, line, area, step, running total, scatter, bubbles, histogram, count, big numbers, and a table with bars. A chart of one number lets you pick which one. A chart of several lets you turn each on and off. Your choices are saved with the query.
+
 ## What it does to your machine
 
 - It runs `psql` on your machine for every query. Sessions are read-only (`default_transaction_read_only=on`). That is each transaction's default: a query that asks for a read-write transaction can still write, so the role you connect as decides what is safe. It never asks for a password: put one in `~/.pgpass`.

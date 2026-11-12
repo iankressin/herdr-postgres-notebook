@@ -56,6 +56,28 @@ test("file: a document round-trips through serialize and parse", () => {
   assert.deepEqual(parseDoc(serialize(doc)).doc, doc);
 });
 
+test("file: a query's chart and series round-trip, and a new query has neither", () => {
+  assert.deepEqual([newQuery("q_x", "select 1").chart, newQuery("q_x", "select 1").series], [null, null]);
+  const doc = updateQuery(sample(), "n_daily", "q_1", { chart: "stacked", series: ["revenue", "cost"] }, NOW);
+  const read = parseDoc(serialize(doc)).doc.notebooks.find((n) => n.id === "n_daily").queries[0];
+  assert.deepEqual([read.chart, read.series], ["stacked", ["revenue", "cost"]]);
+});
+
+test("file: a chart that is not text or series that are not a list of text read as null", () => {
+  const doc = sample();
+  const raw = JSON.parse(serialize(doc));
+  const query = raw.notebooks.find((n) => n.id === "n_daily").queries[0];
+  const read = (chart, series) => {
+    Object.assign(query, { chart, series });
+    return parseDoc(JSON.stringify(raw)).doc.notebooks.find((n) => n.id === "n_daily").queries[0];
+  };
+  for (const [chart, series] of [[5, "a"], [["bars"], [1, "a"]], [{}, { a: 1 }], [undefined, undefined]]) {
+    const q = read(chart, series);
+    assert.deepEqual([q.chart, q.series], [null, null], JSON.stringify([chart, series]));
+  }
+  assert.equal(read("pie", []).chart, "pie", "an unknown key is kept; the chart falls back when drawn");
+});
+
 test("file: text that is not JSON is refused with a reason", () => {
   assert.match(parseDoc("{ not json").error, /not JSON/);
 });

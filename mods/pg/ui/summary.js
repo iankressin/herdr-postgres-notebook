@@ -1,8 +1,8 @@
 // One line per column: what it holds, how full it is, its range or most common value.
 import { div } from "gpui-kit";
 import { h_flex, v_flex } from "gpui-base";
-import { summarize } from "../shape.js";
-import { alpha, memo, mono } from "./kit.js";
+import { memo, summarize } from "../shape.js";
+import { alpha, mono } from "./kit.js";
 
 export const summaryLines = (result) => memo(result, "summary", () => summarize(result));
 

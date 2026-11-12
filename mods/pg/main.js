@@ -23,7 +23,7 @@ import {
 } from "./logic.js";
 import * as nb from "./notebooks.js";
 import { NOTHING, READ_BYTES, fileName, readSlice, roomLeft, startReading } from "./result.js";
-import { describe, ident } from "./shape.js";
+import { describe, ident, toggledSeries } from "./shape.js";
 import { NotebookFile } from "./store.js";
 import { explorer } from "./ui/explorer.js";
 import { mono, syntax } from "./ui/kit.js";
@@ -477,7 +477,8 @@ export default class Pg extends View {
         }
         if (token !== cell.token) return;
         const result = describe(reading.header, reading.rows);
-        for (const step of preparations(result)) {
+        const query = this.notebook()?.queries.find((q) => q.id === cell.id) ?? null;
+        for (const step of preparations(result, query)) {
           await cx.sleep(0);
           if (token !== cell.token) return;
           step();
@@ -624,6 +625,37 @@ export default class Pg extends View {
     const { nbId } = this;
     this.change((d) => nb.updateQuery(d, nbId, query.id, { measure }, now()), cx);
     cx.notify();
+  }
+
+  // `chart` is a key of CHARTS, or null for Automatic.
+  setChart(query, chart, cx) {
+    const { nbId } = this;
+    this.change((d) => nb.updateQuery(d, nbId, query.id, { chart }, now()), cx);
+    cx.notify();
+  }
+
+  // Starts from the series drawn now, so the first click keeps the default ones. Turning off the
+  // last series, or on a seventh, does nothing.
+  toggleSeries(query, name, cx) {
+    const result = this.cells.get(query.id)?.result;
+    const series = result ? toggledSeries(result, query, name) : null;
+    if (!series) return;
+    const { nbId } = this;
+    this.change((d) => nb.updateQuery(d, nbId, query.id, { series }, now()), cx);
+    cx.notify();
+  }
+
+  // Work too slow to do while drawing, such as a chart over a big result. The page draws again
+  // once it is done.
+  drawLater(work) {
+    this.spawn(null, async (cx) => {
+      await cx.sleep(0);
+      try {
+        work();
+      } finally {
+        cx.notify();
+      }
+    });
   }
 
   // ── Asking an agent ────────────────────────────────────────────────────────
