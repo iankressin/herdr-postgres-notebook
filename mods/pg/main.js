@@ -1,6 +1,7 @@
+import * as fs from "fs/promises";
 import { View } from "gpui-kit";
 import { h_flex, EditorState, InputState } from "gpui-base";
-import { exec, props, run, setShared, shared, spaces, theme, watchFolder } from "herdr";
+import { appHome, exec, props, run, setShared, shared, spaces, theme, watchFolder } from "herdr";
 import { Panel } from "./panel.js";
 import {
   LIST_DATABASES_SQL,
@@ -9,7 +10,6 @@ import {
   STATS_SQL,
   columnsSql,
   errorMessage,
-  limited,
   openCommand,
   parseColumns,
   parseDatabases,
@@ -29,17 +29,39 @@ import { page } from "./ui/page.js";
 
 const ADMIN_DATABASE = "postgres";
 const SAVE_AFTER_MS = 600;
+// The longest Herdr lets a program run. Queries have no limit of their own.
+const QUERY_MS = 600000;
 
 const currentServer = () => serverText(shared(SERVER_KEY));
 const messageOf = (e) => String(e?.message ?? e);
 const now = () => new Date().toISOString().replace(/\.\d{3}Z$/, "Z");
 
+function execFailed(e) {
+  const message = messageOf(e);
+  if (/time/i.test(message)) throw new Error("The query ran for 10 minutes, the longest Herdr lets a program run.");
+  if (/not found|no such file|spawn/i.test(message)) throw new Error("Could not start psql. Install the PostgreSQL client.");
+  throw new Error(message);
+}
+
+// For the catalog: small answers, read from stdout.
 async function runPsql(database, sql) {
-  const result = await exec("psql", psqlArgs(parseServer(currentServer()), database, sql)).catch(() => {
-    throw new Error("Could not start psql. Install the PostgreSQL client.");
-  });
+  const result = await exec("psql", psqlArgs(parseServer(currentServer()), database, sql)).catch(execFailed);
   if (result.code !== 0) throw new Error(errorMessage(result.stderr));
   return result.stdout;
+}
+
+// For a person's query: psql writes the rows to a file, which skips exec's 8 MiB output cap.
+async function runQuery(database, sql) {
+  const dir = `${appHome()}/data/pg`;
+  const file = `${dir}/result-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}.csv`;
+  await fs.mkdir(dir, { recursive: true });
+  try {
+    const result = await exec("psql", psqlArgs(parseServer(currentServer()), database, sql, file), { timeout: QUERY_MS }).catch(execFailed);
+    if (result.code !== 0) throw new Error(errorMessage(result.stderr));
+    return await fs.readFile(file, "utf8").catch(() => "");
+  } finally {
+    await fs.unlink(file).catch(() => {});
+  }
 }
 
 const listDatabases = async () => parseDatabases(await runPsql(ADMIN_DATABASE, LIST_DATABASES_SQL));
@@ -348,7 +370,7 @@ export default class Pg extends View {
     cx.notify();
     cx.spawn(async (cx) => {
       try {
-        const { header, rows } = parseRows(await runPsql(db, limited(source)));
+        const { header, rows } = parseRows(await runQuery(db, source));
         if (token !== cell.token) return;
         cell.result = describe(header, rows);
       } catch (e) {

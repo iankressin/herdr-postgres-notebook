@@ -1,9 +1,11 @@
 // The printed table: rules above and below, no vertical lines, numbers on the right in figures,
 // identifiers and code in mono, the rest as text. No pills, chips or pictures inside cells.
 import { div } from "gpui-kit";
-import { h_flex, v_flex } from "gpui-base";
+import { h_flex, v_flex, v_virtual_list, Scrollbar } from "gpui-base";
 import { arrayItems, formatNumber, jsonPreview, naturalTime } from "../shape.js";
-import { alpha, mono } from "./kit.js";
+import { alpha, memo, mono } from "./kit.js";
+
+const ROW = 36;
 
 function value(v, kind, col, t) {
   if (v === null || v === "") return div().text_color(t.dim).child("—");
@@ -17,7 +19,9 @@ function value(v, kind, col, t) {
   return div().min_w(0).truncate().child(v.replace(/[\r\n\t]+/g, " "));
 }
 
-function widths({ header, rows, kinds, prof }) {
+// From the first rows only: enough to size the columns, cheap on a million rows.
+function widths({ header, rows: all, kinds, prof }) {
+  const rows = all.length > 2000 ? all.slice(0, 2000) : all;
   const shown = (v, i) => (v === null ? 1 : kinds[i] === "number" ? formatNumber(v).length : v.length);
   const longest = header.map((name, i) => Math.min(44, rows.reduce((m, row) => Math.max(m, shown(row[i], i)), name.length)));
   const fixed = { time: 150, bool: 70, json: 380, uuid: 110, binary: 90 };
@@ -32,7 +36,7 @@ function widths({ header, rows, kinds, prof }) {
 
 export function printedTable(id, result, t) {
   const { header, rows, kinds, prof } = result;
-  const w = widths(result);
+  const w = memo(result, "widths", () => widths(result));
   const total = w.reduce((a, b) => a + b, 0);
   const rule = (strength) => div().h(1).w_full().bg(alpha(t.foreground, strength));
   return div().id(`pg-x-${id}`).w_full().overflow_x_scrollbar()
@@ -42,8 +46,13 @@ export function printedTable(id, result, t) {
         .when(kinds[i] === "number", (e) => e.justify_end())
         .child(div().truncate().text_size(12).font_semibold().text_color(t.muted).child(name)))))
       .child(rule(0.1))
-      .child(v_flex().id(`pg-y-${id}`).max_h(420).overflow_y_scrollbar().children(rows.map((row, r) => h_flex().id(`pg-r-${id}-${r}`).h(36).flex_none()
-        .border_b(1).border_color(alpha(t.border, 0.5)).text_size(13.5).hover((st) => st.bg(t.hover))
-        .children(row.map((v, i) => h_flex().w(w[i]).flex_none().h_full().pr(16).items_center().min_w(0).child(value(v, kinds[i], prof.cols[i], t)))))))
+      // Only the rows on screen are drawn, so a result of any size scrolls smoothly.
+      .child(v_flex().relative().w_full().h(Math.min(420, rows.length * ROW))
+        .child(v_virtual_list(`pg-y-${id}`, rows.length, ROW, (r) => String(r), (range) => rows.slice(range.start, range.end).map((row, k) => {
+          const r = range.start + k;
+          return h_flex().id(`pg-r-${id}-${r}`).w_full().h(ROW).flex_none().border_b(1).border_color(alpha(t.border, 0.5)).text_size(13.5).hover((st) => st.bg(t.hover))
+            .children(row.map((v, i) => h_flex().w(w[i]).flex_none().h_full().pr(16).items_center().min_w(0).child(value(v, kinds[i], prof.cols[i], t))));
+        })).size_full())
+        .child(Scrollbar.vertical(`pg-y-${id}`).absolute().inset_0()))
       .child(rule(0.22)));
 }

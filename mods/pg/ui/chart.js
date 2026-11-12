@@ -3,7 +3,7 @@
 import { div } from "gpui-kit";
 import { h_flex, v_flex } from "gpui-base";
 import { barTotals, chartTitle, compact, formatNumber, measureChoices, plan, scatterPoints, spread, timeSeries, words } from "../shape.js";
-import { alpha, mono } from "./kit.js";
+import { alpha, memo, mono } from "./kit.js";
 
 const H = 220;
 
@@ -65,19 +65,20 @@ function scatterChart(dots, xName, t) {
 }
 
 function drawn(result, p, t) {
+  const once = (work) => memo(result, `${p.type}:${p.x}:${p.y}`, work);
   if (p.type === "time" || p.type === "timecount") {
-    const series = timeSeries(result, p.x, p.y);
+    const series = once(() => timeSeries(result, p.x, p.y));
     return series && { el: timeChart(series, t), note: series.note };
   }
   if (p.type === "bars" || p.type === "count") {
-    const bars = barTotals(result, p.x, p.y);
+    const bars = once(() => barTotals(result, p.x, p.y));
     return { el: barChart(bars, t), note: bars.note };
   }
   if (p.type === "scatter") {
-    const dots = scatterPoints(result, p.x, p.y);
+    const dots = once(() => scatterPoints(result, p.x, p.y));
     return dots && { el: scatterChart(dots, result.header[p.x], t), note: null };
   }
-  const bins = spread(result, p.x);
+  const bins = once(() => spread(result, p.x));
   return bins && { el: columnChart(bins.points, bins.labels, t), note: bins.note };
 }
 

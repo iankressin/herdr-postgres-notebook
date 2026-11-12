@@ -6,7 +6,9 @@ A Postgres browser mod for the [Herdr app](https://herdr.dev). Keep notebooks of
 
 ## What it does to your machine
 
-- It runs `psql` on your machine for every query. Sessions are read-only (`default_transaction_read_only=on`), and each statement stops after 10 seconds. It never asks for a password: put one in `~/.pgpass`.
+- It runs `psql` on your machine for every query. Sessions are read-only (`default_transaction_read_only=on`). It never asks for a password: put one in `~/.pgpass`.
+- Queries have no row limit and no time limit of their own. Herdr stops any program after 10 minutes. The table draws only the rows on screen, so a big result still scrolls smoothly.
+- While it reads a result, psql writes it to a temporary file in `~/.config/herdr-app/data/pg/`. The mod deletes the file once it has read it.
 - It saves notebooks to `~/.config/herdr-app/pg-notebooks/<server>/<database>.json`. It saves no query results.
 - It reaches nothing on the network except the Postgres server you name.
 

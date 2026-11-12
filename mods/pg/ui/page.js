@@ -1,7 +1,6 @@
 // The open notebook as one page: its name, its folder, Run all, then each query.
 import { div } from "gpui-kit";
 import { h_flex, v_flex, Input } from "gpui-base";
-import { LIMIT } from "../logic.js";
 import { folderPath } from "../notebooks.js";
 import { querySection } from "./query.js";
 import { SERIF, button, icon, keepFocus } from "./kit.js";
@@ -44,7 +43,7 @@ function body(view, t) {
             .child(Input.new(view.editInput).h_full().font_family(SERIF).text_size(36).font_semibold()))
           : bigTitle(notebook.name, t).id("pg-title").cursor_text().tooltip("Rename this notebook").on_click((_e, cx) => view.editTitle(cx)))
         .when(path.length > 0, (e) => e.child(div().text_size(13.5).text_color(t.muted).child(path.join(" / "))))
-        .child(div().max_w(640).text_size(14).line_height("150%").text_color(t.muted).child(`Read-only. Each query stops at ${LIMIT} rows or 10 seconds.`)))
+        .child(div().max_w(640).text_size(14).line_height("150%").text_color(t.muted).child("Read-only. Nothing here can change the database.")))
       .when(sections.length > 0, (e) => e.child(button("pg-run-all", t).on_click((_e, cx) => view.runAll(cx)).child(icon("play", 11, t.muted)).child("Run all"))),
     ...(sections.length > 0 ? sections : [div().text_size(14).text_color(t.muted).child("Click a table on the left, or add a query.")]),
     h_flex().child(button("pg-add", t).on_click((_e, cx) => view.addQuery("select ", cx)).child(icon("plus", 12, t.muted)).child("Add a query")),

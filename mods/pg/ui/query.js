@@ -2,9 +2,8 @@
 // or a summary, and the result line.
 import { div } from "gpui-kit";
 import { h_flex, v_flex, Editor, Input } from "gpui-base";
-import { LIMIT } from "../logic.js";
 import { queryTitle } from "../notebooks.js";
-import { defaultView } from "../shape.js";
+import { defaultView, formatNumber } from "../shape.js";
 import { chart } from "./chart.js";
 import { summary } from "./summary.js";
 import { printedTable } from "./table.js";
@@ -12,10 +11,10 @@ import { CLEAR, SERIF, alpha, icon, keepFocus, mono } from "./kit.js";
 
 const VIEWS = [["table", "Table"], ["chart", "Chart"], ["summary", "Summary"]];
 
-const plural = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
+const plural = (n, word) => `${formatNumber(String(n))} ${word}${n === 1 ? "" : "s"}`;
 const resultLine = (cell) => {
   const { header, rows } = cell.result;
-  return `${plural(rows.length, "row")}${rows.length >= LIMIT ? `, the first ${LIMIT}` : ""} · ${plural(header.length, "column")} · ${cell.ms} ms`;
+  return `${plural(rows.length, "row")} · ${plural(header.length, "column")} · ${cell.ms} ms`;
 };
 
 export const viewOf = (query, result) => query.view ?? defaultView(result);

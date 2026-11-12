@@ -1,8 +1,6 @@
 // The rules of the Postgres browser, with no app imports, so `node --test` can run them.
 
 const DEFAULT_PORT = 5432;
-const TIMEOUT_MS = 10000;
-export const LIMIT = 500;
 
 export const DEFAULT_SERVER = `localhost:${DEFAULT_PORT}`;
 export const SERVER_KEY = "pg.server";
@@ -38,31 +36,56 @@ export function conninfo({ host, port, user }, database) {
   const userField = user ? `user=${conninfoValue(user)} ` : "";
   return `host=${conninfoValue(host)} port=${conninfoValue(String(port))} ${userField}dbname=${conninfoValue(database)} `
     + `connect_timeout=5 application_name=herdr-pg `
-    + `options='-c default_transaction_read_only=on -c statement_timeout=${TIMEOUT_MS}'`;
+    + `options='-c default_transaction_read_only=on'`;
 }
 
-export function psqlArgs(server, database, sql) {
-  return ["-X", "-w", "--csv", "-P", `null=${NULL_MARK}`, "-d", conninfo(server, database), "-c", sql];
+// With `output`, psql writes the result to that file instead of stdout.
+export function psqlArgs(server, database, sql, output = null) {
+  return ["-X", "-w", "--csv", "-P", `null=${NULL_MARK}`, "-d", conninfo(server, database), "-c", sql, ...(output ? ["-o", output] : [])];
 }
 
+// Finds commas, newlines and quotes with indexOf: Herdr's script engine is slow at going
+// character by character, and a result can be many megabytes. psql quotes any field that holds
+// a quote, so a quote only ever opens a field.
 export function parseCsv(text) {
   const lines = [];
+  const n = text.length;
   let line = [];
-  let field = "";
-  let quoted = false;
-  let pending = false;
-  for (let i = 0; i < text.length; i++) {
-    const c = text[i];
-    if (quoted) {
-      if (c === '"' && text[i + 1] === '"') { field += '"'; i++; }
-      else if (c === '"') quoted = false;
-      else field += c;
-    } else if (c === '"') { quoted = true; pending = true; }
-    else if (c === ",") { line.push(field); field = ""; pending = true; }
-    else if (c === "\n") { line.push(field); lines.push(line); line = []; field = ""; pending = false; }
-    else { field += c; pending = true; }
+  let i = 0;
+  let comma = -1;
+  let newline = -1;
+  while (i < n) {
+    let field;
+    if (text.charCodeAt(i) === 34) {
+      let from = i + 1;
+      field = "";
+      for (;;) {
+        const q = text.indexOf('"', from);
+        if (q < 0) { field += text.slice(from); i = n; break; }
+        if (text.charCodeAt(q + 1) === 34) { field += text.slice(from, q + 1); from = q + 2; continue; }
+        field += text.slice(from, q);
+        i = q + 1;
+        break;
+      }
+      const tail = i < n ? text.indexOf(",", i) : -1;
+      const end = i < n ? text.indexOf("\n", i) : -1;
+      const stop = Math.min(tail < 0 ? n : tail, end < 0 ? n : end);
+      if (stop > i) { field += text.slice(i, stop); i = stop; }
+    } else {
+      if (comma < i) comma = text.indexOf(",", i);
+      if (newline < i) newline = text.indexOf("\n", i);
+      if (comma < 0) comma = n;
+      if (newline < 0) newline = n;
+      const stop = Math.min(comma, newline);
+      field = text.slice(i, stop);
+      i = stop;
+    }
+    line.push(field);
+    if (i >= n) { lines.push(line); break; }
+    if (text.charCodeAt(i) === 10) { lines.push(line); line = []; }
+    i++;
+    if (i === n && text.charCodeAt(n - 1) === 44) { line.push(""); lines.push(line); }
   }
-  if (pending) { line.push(field); lines.push(line); }
   return lines;
 }
 
@@ -99,12 +122,6 @@ export function groupBySchema(tables) {
     groups.get(table.schema).push(table);
   }
   return [...groups].map(([schema, list]) => ({ schema, tables: list }));
-}
-
-// Statements that return rows get a limit around them, so a big table cannot flood the page.
-export function limited(sql) {
-  const body = sql.trim().replace(/;\s*$/, "");
-  return /^(select|with|values|table)\b/i.test(body) && !body.includes(";") ? `select * from (\n${body}\n) as q limit ${LIMIT}` : body;
 }
 
 // Starters that read Postgres's own catalog, so they mean something on any database.
@@ -151,7 +168,7 @@ export function parseColumns(text) {
 }
 
 export function errorMessage(stderr) {
-  if (stderr.includes("statement timeout")) return `The query stopped after ${TIMEOUT_MS / 1000} seconds.`;
+  if (stderr.includes("statement timeout")) return "The server stopped the query: it ran past the server's own statement timeout.";
   if (stderr.includes("no password supplied")) return "The server needs a password. Add it to ~/.pgpass.";
   const first = stderr.split("\n")[0].trim().replace(/^(psql: error: |ERROR:\s+|FATAL:\s+)/, "");
   return first || "psql failed with no message.";

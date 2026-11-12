@@ -1,6 +1,6 @@
 # Postgres Notebook
 
-A Postgres browser for the Herdr app. Each database gets a tab. On the left, an explorer lists the databases on your server, your saved notebooks in folders, and the tables. On the right, the open notebook reads as one page of SQL queries, each shown as a printed table, a chart or a column summary. Every session is read-only, and each query stops at 500 rows or 10 seconds.
+A Postgres browser for the Herdr app. Each database gets a tab. On the left, an explorer lists the databases on your server, your saved notebooks in folders, and the tables. On the right, the open notebook reads as one page of SQL queries, each shown as a printed table, a chart or a column summary. Every session is read-only, and results of any size scroll smoothly.
 
 ![Postgres Notebook](preview.png)
 
@@ -17,7 +17,7 @@ The tab has two parts side by side.
 
 **Notebook page** (right, `theme().background`, 56px side padding, content at most 1040px wide, 44px between sections):
 
-- The notebook's name in Source Serif 4, 36px, semibold. Under it, its folder path in muted text (`Ops / Daily checks`) and "Read-only. Each query stops at 500 rows or 10 seconds." On the right, **Run all**.
+- The notebook's name in Source Serif 4, 36px, semibold. Under it, its folder path in muted text (`Ops / Daily checks`) and "Read-only. Nothing here can change the database." On the right, **Run all**.
 - Each query has:
   - A title row: the title in Source Serif 4, 22px; the **Table · Chart · Summary** switch, which shows once there are rows; a × to remove the query; and the **Run** pill (`solid`, with ⌘↵).
   - The SQL block: editable, `theme().canvas`, radius 12, a 55% accent border while focused, soft wrap.
@@ -36,6 +36,7 @@ The tab has two parts side by side.
   - Duplicate makes "<name> copy" beside the notebook and opens it.
   - Delete removes a folder at once and moves its contents up one level. For a notebook, the row asks first: "Delete <name>? Delete / Keep".
 - **Titles.** A click on the page title or a query title edits it in place. A query title left empty, or the same as the automatic one, stays automatic. The automatic title is the table the query reads, in words ("Order items").
+- **No limits.** A query returns every row and runs until it ends, up to the 10 minutes Herdr allows any program. The table draws only the rows on screen.
 - **Views.** Until you pick one, a result that charts well, with more than one row, opens as Chart. Anything else opens as Table. Your pick is saved with the query.
 - **Charts** come from column kinds only:
   - a number over a date: bars on a real time axis;
@@ -62,9 +63,9 @@ The tab has two parts side by side.
   - `main.js` holds the view's state and actions.
   - `ui/*.js` draws.
   - `logic.js`, `notebooks.js` and `shape.js` have no app imports, and `node --test` runs their tests.
-- **Programs:** `psql`, with `-X -w --csv`, a read-only session (`default_transaction_read_only=on`) and `statement_timeout=10000`. Queries that return rows are wrapped in `select * from (…) as q limit 500`.
+- **Programs:** `psql`, with `-X -w --csv` and a read-only session (`default_transaction_read_only=on`). For a query, psql writes the rows to a temporary file (`-o`, in `~/.config/herdr-app/data/pg/`). That skips `exec`'s 8 MiB output cap, and the mod deletes the file after reading it. `exec` gets `timeout: 600000`, the most Herdr allows.
 - **herdr:** `exec`, `readTextFile`, `writeTextFile` (with `expected`), `watchFolder`, `notify`, `appHome`, `shared`/`setShared` (`pg.server`), `run` (`tab.select`, `tab.new`), `spaces`, `theme`, `settings`, `props`.
-- **gpui-base:** `EditorState`/`Editor` (SQL, soft wrap), `InputState`/`Input`, and `Popup` (the row menu, anchored `top_right`).
+- **gpui-base:** `EditorState`/`Editor` (SQL, soft wrap), `InputState`/`Input`, `v_virtual_list` with `Scrollbar` (the result table), and `Popup` (the row menu, anchored `top_right`).
 - **File shape (version 1):** `{ version, server, database, lastOpened, folders: [{id, name, parent, open}], notebooks: [{id, name, folder, created, updated, queries: [{id, title, sql, view, measure}]}] }`. `view` is null, "table", "chart" or "summary". `measure` is a column name or null.
 - **Art:** `icons/*.svg` (24 viewBox, stroke 2, round caps, `currentColor`). `fonts/` holds Source Serif 4 Regular and Semibold (SIL OFL, `fonts/OFL.md`).
 
@@ -73,6 +74,7 @@ The tab has two parts side by side.
 - Every change is a step from one document to the next, kept until a write lands. `writeTextFile` refuses a stale write. Then read the file again, replay the unsaved steps on top of it, and write once more. A step that no longer applies (its item is gone) must return the document unchanged.
 - The SQL block being typed in must not take SQL from another tab's write. Every other block does.
 - The mod's script engine ignores `localeCompare` options and compares by code point. Sort on `toLowerCase()`. A Node test will not catch this.
+- The engine is far slower than Node at character loops and regexes. Parse CSV with `indexOf`, not character by character. Base the column guesses (ids, code, prose, labels) on the first 2,000 rows, and count filled and distinct values over all rows. Work out widths, chart data and summaries once per result. `Math.min(...values)` overflows on a few hundred thousand values, so use a loop.
 - `"transparent"` is not a color. Use `"#00000000"`.
 - `cx.notify()` throws during `render`, and `EditorState.new`/`InputState.new` only work in `init`, handlers or spawned tasks.
 - The root takes focus on mouse down, so text fields and SQL blocks stop the mouse down from reaching it.
@@ -91,4 +93,5 @@ The tab has two parts side by side.
 3. After quitting and restarting Herdr, the folders, notebooks, queries, chosen views and measures are all there, and the tab opens on the last notebook.
 4. Two tabs on the same database: a rename in one shows in the other within two seconds.
 5. Each of the six chart types appears for a query of that shape. A failing query shows its error. An empty result shows "No rows."
-6. Changing the server in the explorer switches to that server's notebooks.
+6. A query returning 60,000 rows (about 14 MB) shows all of them in under a few seconds and scrolls. A query that runs for 12 seconds finishes.
+7. Changing the server in the explorer switches to that server's notebooks.

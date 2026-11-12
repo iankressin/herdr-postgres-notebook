@@ -120,8 +120,8 @@ test("conninfo: every session is read-only", () => {
   assert.match(conninfo(SERVER, "shop"), /-c default_transaction_read_only=on/);
 });
 
-test("conninfo: every statement stops after 10 seconds", () => {
-  assert.match(conninfo(SERVER, "shop"), /-c statement_timeout=10000/);
+test("conninfo: sets no statement timeout, so long queries run to the end", () => {
+  assert.doesNotMatch(conninfo(SERVER, "shop"), /statement_timeout/);
 });
 
 test("conninfo: escapes a quote and a backslash in the database name", () => {
@@ -153,6 +153,14 @@ test("csv: reads a comma, a doubled quote and a newline inside quotes", () => {
 
 test("csv: reads text with no final newline", () => {
   assert.deepEqual(parseCsv("a,b\n1,2"), [["a", "b"], ["1", "2"]]);
+});
+
+test("csv: a quoted field followed by more text keeps both", () => {
+  assert.deepEqual(parseCsv('"q"tail,x\n'), [["qtail", "x"]]);
+});
+
+test("csv: a line ending in a comma has an empty last field", () => {
+  assert.deepEqual(parseCsv("a,\nb,"), [["a", ""], ["b", ""]]);
 });
 
 test("csv: reads an empty result as no lines", () => {
@@ -224,8 +232,14 @@ test("columns: parses a key position and a not-null column", () => {
   assert.deepEqual(columns, [{ name: "id", type: "integer", nullable: false, default: "nextval('s')", pk: 0 }]);
 });
 
-test("error: a timeout gets a clear message", () => {
-  assert.equal(errorMessage("ERROR:  canceling statement due to statement timeout\n"), "The query stopped after 10 seconds.");
+test("error: a timeout set on the server gets a clear message", () => {
+  assert.equal(errorMessage("ERROR:  canceling statement due to statement timeout\n"), "The server stopped the query: it ran past the server's own statement timeout.");
+});
+
+test("psql args: write the result to a file when asked, and to stdout otherwise", () => {
+  const args = psqlArgs(SERVER, "shop", "select 1", "/tmp/r.csv");
+  assert.deepEqual(args.slice(-2), ["-o", "/tmp/r.csv"]);
+  assert.equal(psqlArgs(SERVER, "shop", "select 1").includes("-o"), false);
 });
 
 test("error: removes the prefix and keeps the first line", () => {

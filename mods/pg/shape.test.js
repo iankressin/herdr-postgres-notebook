@@ -146,3 +146,11 @@ test("spread and scatter: an empty value is missing, not zero", () => {
   const pairs = describe(["a", "b"], [["1", "2"], [null, "5"], ["3", "4"]]);
   assert.deepEqual(scatterPoints(pairs, 0, 1).points.map((p) => [p.a, p.b]), [[1, 2], [3, 4]]);
 });
+
+test("large results: half a million values chart and summarize without overflowing the stack", () => {
+  const rows = Array.from({ length: 500000 }, (_, i) => [String(i % 997), String(i)]);
+  const result = describe(["a", "b"], rows);
+  assert.equal(sum(spread(result, 0).points), 500000);
+  assert.equal(scatterPoints(result, 0, 1).x1, 996);
+  assert.match(summarize(result)[1].range, /^0 to 500\.0K/);
+});

@@ -4,6 +4,8 @@
 import { quoteIdent } from "./logic.js";
 
 export const CELL_CHARS = 600;
+// How many rows the guesses about a column look at. Counts still cover every row.
+export const SAMPLE = 2000;
 export const MAX_BARS = 16;
 export const SLICES = 50;
 
@@ -15,6 +17,10 @@ const SEMANTIC = /^(success|succeeded|ok|done|complete|completed|pass|passed|act
 const URL_VALUE = /^https?:\/\/\S+$/i;
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 const HOLDS = { number: "numbers", time: "dates", bool: "yes or no", json: "JSON" };
+
+// Math.min(...xs) overflows the stack on a few hundred thousand values.
+const lowest = (xs) => xs.reduce((a, b) => (b < a ? b : a), Infinity);
+const highest = (xs) => xs.reduce((a, b) => (b > a ? b : a), -Infinity);
 
 export function kindOfType(type = "") {
   const t = type.toLowerCase();
@@ -43,9 +49,10 @@ export function kindOfValues(values) {
 // The kind of each column: from the catalog type when known, else from the values.
 export function kindsFor(header, rows, columns = []) {
   const byName = new Map(columns.map((c) => [c.name, c]));
+  const sample = rows.length > SAMPLE ? rows.slice(0, SAMPLE) : rows;
   return header.map((name, i) => {
     const column = byName.get(name);
-    return column ? kindOfType(column.type) : kindOfValues(rows.map((r) => r[i]));
+    return column ? kindOfType(column.type) : kindOfValues(sample.map((r) => r[i]));
   });
 }
 
@@ -59,27 +66,37 @@ export function looksLikeCode(v) {
 
 const mostlyCode = (values) => values.length > 0 && values.filter(looksLikeCode).length / values.length >= 0.5;
 
+// The guesses (ids, code, prose, links, labels) read the first SAMPLE rows: Herdr's script
+// engine runs regexes slowly, and a few thousand rows show what a column holds. How many rows
+// are filled and how many values differ count every row.
 export function profileOf(header, rows, kinds, columns = []) {
   const byName = new Map(columns.map((c) => [c.name, c]));
+  const sample = rows.length > SAMPLE ? rows.slice(0, SAMPLE) : rows;
   const cols = header.map((name, i) => {
     const kind = kinds[i];
-    const values = rows.map((r) => r[i]).filter((v) => v !== null && v !== "");
-    const n = values.length;
-    const distinct = new Set(values).size;
-    const avgLen = n ? values.reduce((s, v) => s + v.length, 0) / n : 0;
-    const spaced = n ? values.filter((v) => /\S\s+\S/.test(v)).length / n : 0;
+    const values = sample.map((r) => r[i]).filter((v) => v !== null && v !== "");
+    const unique = new Set();
+    let n = 0;
+    for (const r of rows) {
+      const v = r[i];
+      if (v !== null && v !== "") { n++; unique.add(v); }
+    }
+    const distinct = unique.size;
+    const seen = values.length;
+    const avgLen = seen ? values.reduce((s, v) => s + v.length, 0) / seen : 0;
+    const spaced = seen ? values.filter((v) => /\S\s+\S/.test(v)).length / seen : 0;
     const pk = (byName.get(name)?.pk ?? null) !== null;
-    const idLike = pk || kind === "uuid" || /(^|_)id$|[a-z]Id$/.test(name) || (n > 0 && values.every((v) => ID_VALUE.test(v)))
-      || (kind === "number" && n > 0 && values.every((v) => /^-?\d{9,}$/.test(v)));
+    const idLike = pk || kind === "uuid" || /(^|_)id$|[a-z]Id$/.test(name) || (seen > 0 && values.every((v) => ID_VALUE.test(v)))
+      || (kind === "number" && seen > 0 && values.every((v) => /^-?\d{9,}$/.test(v)));
     const category = kind === "text" && !idLike && n > 0 && avgLen <= 28 && spaced < 0.5
       && (n >= 4 ? distinct <= Math.max(2, Math.min(10, n / 3)) : values.every((v) => SEMANTIC.test(v)));
     const nums = kind === "number" ? values.map(Number).filter(Number.isFinite) : [];
     return {
       name, kind, pk, n, distinct, avgLen, spaced, idLike, category,
-      url: kind === "text" && n > 0 && values.filter(isUrl).length / n >= 0.5,
+      url: kind === "text" && seen > 0 && values.filter(isUrl).length / seen >= 0.5,
       code: kind === "text" && mostlyCode(values),
       prose: kind === "text" && avgLen >= 80 && spaced >= 0.8 && !mostlyCode(values),
-      max: nums.length ? Math.max(...nums.map(Math.abs)) : 0,
+      max: nums.length ? highest(nums.map(Math.abs)) : 0,
       constant: n > 1 && distinct === 1,
     };
   });
@@ -245,8 +262,8 @@ const filled = (v) => v !== null && v !== "";
 export function spread(result, x) {
   const values = result.rows.map((r) => r[x]).filter(filled).map(Number).filter(Number.isFinite);
   if (values.length === 0) return null;
-  const min = Math.min(...values);
-  const max = Math.max(...values);
+  const min = lowest(values);
+  const max = highest(values);
   const n = min === max ? 1 : 20;
   const bins = new Array(n).fill(0);
   for (const v of values) bins[n === 1 ? 0 : Math.min(n - 1, Math.floor(((v - min) / (max - min)) * n))]++;
@@ -277,10 +294,10 @@ export function scatterPoints(result, x, y) {
   const h = result.header;
   const pts = result.rows.filter((r) => filled(r[x]) && filled(r[y])).map((r) => [Number(r[x]), Number(r[y])]).filter(([a, b]) => Number.isFinite(a) && Number.isFinite(b));
   if (pts.length === 0) return null;
-  const x0 = Math.min(...pts.map((p) => p[0]));
-  const x1 = Math.max(...pts.map((p) => p[0]));
-  const y0 = Math.min(0, ...pts.map((p) => p[1]));
-  const y1 = Math.max(...pts.map((p) => p[1]));
+  const x0 = lowest(pts.map((p) => p[0]));
+  const x1 = highest(pts.map((p) => p[0]));
+  const y0 = Math.min(0, lowest(pts.map((p) => p[1])));
+  const y1 = highest(pts.map((p) => p[1]));
   // 97%, not 100%, so the last dot stays inside the plot.
   const fx = (v) => (x1 === x0 ? 50 : ((v - x0) / (x1 - x0)) * 97);
   const fy = (v) => (y1 === y0 ? 50 : 97 - ((v - y0) / (y1 - y0)) * 97);
@@ -313,7 +330,7 @@ function rangeOf(values, kind, col, now) {
   if (kind === "number" && !col.idLike) {
     const nums = values.map(Number);
     const avg = nums.reduce((a, b) => a + b, 0) / nums.length;
-    return `${compact(Math.min(...nums))} to ${compact(Math.max(...nums))}, average ${compact(avg)}`;
+    return `${compact(lowest(nums))} to ${compact(highest(nums))}, average ${compact(avg)}`;
   }
   if (kind === "time") {
     const ms = values.map(timeMs).filter(Number.isFinite).sort((a, b) => a - b);
@@ -324,6 +341,8 @@ function rangeOf(values, kind, col, now) {
   if (col.idLike) return "—";
   const counts = new Map();
   for (const v of values) counts.set(v, (counts.get(v) ?? 0) + 1);
-  const [top, n] = [...counts].sort((a, b) => b[1] - a[1])[0];
+  let top = null;
+  let n = 0;
+  for (const [v, c] of counts) if (c > n) { top = v; n = c; }
   return n > 1 ? `${top.length > 48 ? `${top.slice(0, 48)}…` : top} (${n} rows)` : "every value different";
 }
