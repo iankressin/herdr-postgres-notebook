@@ -17,8 +17,10 @@ function find(node, id) {
 const narrow = () => (find(layout(), "sidebar")?.size?.px ?? Infinity) < 160;
 
 export class Panel {
-  constructor(listDatabases, cx) {
+  // `owner`: the view this panel draws in, which runs its tasks.
+  constructor(listDatabases, owner, cx) {
     this.listDatabases = listDatabases;
+    this.owner = owner;
     this.databases = [];
     this.error = null;
     this.loading = false;
@@ -37,7 +39,7 @@ export class Panel {
     const load = ++this.loadNumber;
     this.loading = true;
     cx.notify();
-    cx.spawn(async (cx) => {
+    this.owner.spawn(cx, async (cx) => {
       let databases = null;
       let error = null;
       try {

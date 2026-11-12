@@ -47,11 +47,16 @@ export function psqlArgs(server, database, sql, output = null) {
 // Finds commas, newlines and quotes with indexOf: Herdr's script engine is slow at going
 // character by character, and a result can be many megabytes. psql quotes any field that holds
 // a quote, so a quote only ever opens a field.
-export function parseCsv(text) {
+export const parseCsv = (text) => readCsv(text).lines;
+
+// Reads lines from `from` on, and stops after the line that brings the fields read to `fields`.
+// `next` is where the following line starts, or the text's length once it is all read.
+export function readCsv(text, from = 0, fields = Infinity) {
   const lines = [];
   const n = text.length;
   let line = [];
-  let i = 0;
+  let i = from;
+  let count = 0;
   let comma = -1;
   let newline = -1;
   while (i < n) {
@@ -82,11 +87,16 @@ export function parseCsv(text) {
     }
     line.push(field);
     if (i >= n) { lines.push(line); break; }
-    if (text.charCodeAt(i) === 10) { lines.push(line); line = []; }
+    if (text.charCodeAt(i) === 10) {
+      lines.push(line);
+      count += line.length;
+      line = [];
+      if (count >= fields) return { lines, next: i + 1 };
+    }
     i++;
     if (i === n && text.charCodeAt(n - 1) === 44) { line.push(""); lines.push(line); }
   }
-  return lines;
+  return { lines, next: n };
 }
 
 export function parseRows(text) {

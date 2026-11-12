@@ -34,9 +34,11 @@ function widths({ header, rows: all, kinds, prof }) {
   });
 }
 
+export const columnWidths = (result) => memo(result, "widths", () => widths(result));
+
 export function printedTable(id, result, t) {
   const { header, rows, kinds, prof } = result;
-  const w = memo(result, "widths", () => widths(result));
+  const w = columnWidths(result);
   const total = w.reduce((a, b) => a + b, 0);
   const rule = (strength) => div().h(1).w_full().bg(alpha(t.foreground, strength));
   return div().id(`pg-x-${id}`).w_full().overflow_x_scrollbar()

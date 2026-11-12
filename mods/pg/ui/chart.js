@@ -64,22 +64,33 @@ function scatterChart(dots, xName, t) {
       .child(div().child(compact(dots.x0))).child(div().child(words(xName))).child(div().child(compact(dots.x1))));
 }
 
+// What a chart draws, worked out from every row once and kept with the result.
+export function chartData(result, p) {
+  return memo(result, `${p.type}:${p.x}:${p.y}`, () => {
+    if (p.type === "time" || p.type === "timecount") return timeSeries(result, p.x, p.y);
+    if (p.type === "bars" || p.type === "count") return barTotals(result, p.x, p.y);
+    if (p.type === "scatter") return scatterPoints(result, p.x, p.y);
+    return spread(result, p.x);
+  });
+}
+
+// Every chart the result can show, one for each measure that can be picked.
+export function chartPlans(result) {
+  const plans = new Map();
+  for (const measure of [null, ...result.header]) {
+    const p = plan(result, measure);
+    if (p) plans.set(`${p.type}:${p.x}:${p.y}`, p);
+  }
+  return [...plans.values()];
+}
+
 function drawn(result, p, t) {
-  const once = (work) => memo(result, `${p.type}:${p.x}:${p.y}`, work);
-  if (p.type === "time" || p.type === "timecount") {
-    const series = once(() => timeSeries(result, p.x, p.y));
-    return series && { el: timeChart(series, t), note: series.note };
-  }
-  if (p.type === "bars" || p.type === "count") {
-    const bars = once(() => barTotals(result, p.x, p.y));
-    return { el: barChart(bars, t), note: bars.note };
-  }
-  if (p.type === "scatter") {
-    const dots = once(() => scatterPoints(result, p.x, p.y));
-    return dots && { el: scatterChart(dots, result.header[p.x], t), note: null };
-  }
-  const bins = once(() => spread(result, p.x));
-  return bins && { el: columnChart(bins.points, bins.labels, t), note: bins.note };
+  const data = chartData(result, p);
+  if (!data) return null;
+  if (p.type === "time" || p.type === "timecount") return { el: timeChart(data, t), note: data.note };
+  if (p.type === "bars" || p.type === "count") return { el: barChart(data, t), note: data.note };
+  if (p.type === "scatter") return { el: scatterChart(data, result.header[p.x], t), note: null };
+  return { el: columnChart(data.points, data.labels, t), note: data.note };
 }
 
 export function chart(view, query, result, t) {

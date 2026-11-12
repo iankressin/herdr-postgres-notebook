@@ -2,22 +2,66 @@
 // or a summary, and the result line.
 import { div } from "gpui-kit";
 import { h_flex, v_flex, Editor, Input } from "gpui-base";
+import { home } from "herdr";
 import { queryTitle } from "../notebooks.js";
-import { defaultView, formatNumber } from "../shape.js";
-import { chart } from "./chart.js";
-import { summary } from "./summary.js";
-import { printedTable } from "./table.js";
-import { CLEAR, SERIF, alpha, icon, keepFocus, mono } from "./kit.js";
+import { defaultView, formatBytes, formatNumber } from "../shape.js";
+import { chart, chartData, chartPlans } from "./chart.js";
+import { summary, summaryLines } from "./summary.js";
+import { columnWidths, printedTable } from "./table.js";
+import { CLEAR, SERIF, alpha, button, icon, keepFocus, mono } from "./kit.js";
 
 const VIEWS = [["table", "Table"], ["chart", "Chart"], ["summary", "Summary"]];
 
 const plural = (n, word) => `${formatNumber(String(n))} ${word}${n === 1 ? "" : "s"}`;
-const resultLine = (cell) => {
+const shortPath = (path) => (path.startsWith(`${home()}/`) ? `~${path.slice(home().length)}` : path);
+
+function resultLine(view, query, cell, t) {
   const { header, rows } = cell.result;
-  return `${plural(rows.length, "row")} · ${plural(header.length, "column")} · ${cell.ms} ms`;
-};
+  const cut = cell.cut;
+  const counts = `${cut ? `First ${plural(rows.length, "row")} of a ${formatBytes(cut.bytes)} result` : plural(rows.length, "row")} · ${plural(header.length, "column")} · ${cell.ms} ms`;
+  return h_flex().gap(6).items_center().text_size(12).text_color(t.dim)
+    .child(div().child(counts))
+    .when(Boolean(cut?.saved), (e) => e.child(div().child(`· Saved whole to ${shortPath(cut.saved)}`)))
+    .when(Boolean(cut?.file), (e) => e.child(div().child("·")).child(div().id(`pg-save-${cell.id}`).cursor_pointer().text_color(t.muted)
+      .hover((st) => st.text_color(t.foreground))
+      .on_click((_e, cx) => view.saveResult(cell, query, cx))
+      .child(cut.saving ? "Saving…" : "Save all as CSV")));
+}
+
+// A result bigger than Herdr can hold: show what fits, save all of it, or let it go.
+function askBlock(view, query, cell, t) {
+  const cut = cell.cut;
+  const shown = cell.result.rows.length;
+  const size = formatBytes(cut.bytes);
+  const choice = (key, label, iconName, primary = false) => button(`pg-${key}-${cell.id}`, t)
+    .when(primary, (e) => e.bg(alpha(t.foreground, 0.07)).text_color(t.foreground))
+    .child(icon(iconName, 12, primary ? t.foreground : t.muted)).child(label);
+  return v_flex().gap(10)
+    .child(h_flex().gap(8).items_center().text_size(13.5).font_medium().text_color(t.foreground)
+      .child(div().size(7).rounded_full().bg(t.ansi3)).child("This result is too big to show in full"))
+    .child(div().pl(15).max_w(640).text_size(13).line_height("150%").text_color(t.muted)
+      .child(shown > 0
+        ? `As CSV it is ${size}. Herdr can show its first ${plural(shown, "row")}.`
+        : `As CSV it is ${size}, more than Herdr can show next to the other results open now.`))
+    .when(Boolean(cut.saved), (e) => e.child(div().pl(15).text_size(13).text_color(t.muted).child(`Saved whole to ${shortPath(cut.saved)}.`)))
+    .child(h_flex().pl(15).gap(6)
+      .when(shown > 0, (e) => e.child(choice("show", `Show the first ${plural(shown, "row")}`, "play", true)
+        .on_click((_e, cx) => view.showFirstRows(cell, cx))))
+      .when(Boolean(cut.file), (e) => e.child(choice("save", cut.saving ? "Saving…" : "Save all as CSV", "download")
+        .on_click((_e, cx) => view.saveResult(cell, query, cx))))
+      .child(choice("drop", "Discard", "trash").on_click((_e, cx) => view.discardResult(cell, cx))));
+}
 
 export const viewOf = (query, result) => query.view ?? defaultView(result);
+
+// What the table, the summary and every chart work out from all the rows, as separate steps.
+// The page runs them in a task before it shows the result: Herdr interrupts a render that runs
+// past about 50 ms, and a pass over 50,000 rows takes longer than that.
+export const preparations = (result) => [
+  () => columnWidths(result),
+  () => summaryLines(result),
+  ...chartPlans(result).map((p) => () => chartData(result, p)),
+];
 
 function title(view, query, t) {
   if (view.edit?.key === `qtitle:${query.id}`) {
@@ -69,7 +113,9 @@ function errorBlock(cell, t) {
 }
 
 export function querySection(view, query, cell, t) {
-  const result = cell.result;
+  const choice = cell.cut?.choice ?? null;
+  const asking = choice === "ask" && Boolean(cell.result);
+  const result = asking ? null : cell.result;
   const hasRows = Boolean(result) && result.rows.length > 0;
   const mode = hasRows ? viewOf(query, result) : null;
   return v_flex().id(`pg-q-${query.id}`).flex_none().gap(14)
@@ -88,9 +134,12 @@ export function querySection(view, query, cell, t) {
       .child(runButton(view, cell, t)))
     .child(sqlBlock(cell, t))
     .when(Boolean(cell.error), (e) => e.child(errorBlock(cell, t)))
+    .when(asking, (e) => e.child(askBlock(view, query, cell, t)))
+    .when(choice === "drop", (e) => e.child(div().text_size(13).text_color(t.muted)
+      .child(`Discarded a ${formatBytes(cell.cut.bytes)} result.${cell.cut.saved ? ` All of it is in ${shortPath(cell.cut.saved)}.` : ""}`)))
     .when(Boolean(result) && !hasRows, (e) => e.child(div().text_size(13).text_color(t.muted)
       .child(result.header.length ? `No rows. ${plural(result.header.length, "column")} · ${cell.ms} ms` : `Done in ${cell.ms} ms. It returned no rows.`)))
     .when(hasRows, (e) => e
       .child(mode === "chart" ? chart(view, query, result, t) : mode === "summary" ? summary(result, t) : printedTable(query.id, result, t))
-      .child(div().text_size(12).text_color(t.dim).child(resultLine(cell))));
+      .child(resultLine(view, query, cell, t)));
 }

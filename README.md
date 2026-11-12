@@ -7,9 +7,10 @@ A Postgres browser mod for the [Herdr app](https://herdr.dev). Keep notebooks of
 ## What it does to your machine
 
 - It runs `psql` on your machine for every query. Sessions are read-only (`default_transaction_read_only=on`). It never asks for a password: put one in `~/.pgpass`.
-- Queries have no row limit and no time limit of their own. Herdr stops any program after 10 minutes. The table draws only the rows on screen, so a big result still scrolls smoothly.
-- While it reads a result, psql writes it to a temporary file in `~/.config/herdr-app/data/pg/`. The mod deletes the file once it has read it.
-- It saves notebooks to `~/.config/herdr-app/pg-notebooks/<server>/<database>.json`. It saves no query results.
+- Queries have no time limit of their own. Herdr stops any program after 10 minutes.
+- A result shows in full up to 50,000 rows, or fewer when rows are wide. All of Herdr's mods share a small script memory, so the notebook holds only so much at once across its tabs. When a result does not fit, the notebook asks what to do with it: show its first rows, save all of it as CSV, or discard it.
+- psql writes each result to a temporary file in `~/.config/herdr-app/data/pg/`. The mod deletes the file once it has read it. For a result too big to show, it keeps the file until you save or discard the result, run the query again or close the tab. A file left behind by a crash goes after a day.
+- It saves notebooks to `~/.config/herdr-app/pg-notebooks/<server>/<database>.json`. It saves a query's result only when you choose **Save all as CSV**: then psql's file moves to `~/Downloads/<query title>.csv`.
 - It reaches nothing on the network except the Postgres server you name.
 
 ## Install

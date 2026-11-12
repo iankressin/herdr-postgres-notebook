@@ -1,7 +1,7 @@
 import * as fs from "fs/promises";
 import { View } from "gpui-kit";
 import { h_flex, EditorState, InputState } from "gpui-base";
-import { appHome, exec, props, run, setShared, shared, spaces, theme, watchFolder } from "herdr";
+import { appHome, exec, home, notify, props, run, setShared, shared, spaces, theme, watchFolder } from "herdr";
 import { Panel } from "./panel.js";
 import {
   LIST_DATABASES_SQL,
@@ -13,7 +13,6 @@ import {
   openCommand,
   parseColumns,
   parseDatabases,
-  parseRows,
   parseServer,
   parseStats,
   parseTables,
@@ -21,11 +20,13 @@ import {
   serverText,
 } from "./logic.js";
 import * as nb from "./notebooks.js";
+import { NOTHING, READ_BYTES, fileName, readSlice, roomLeft, startReading } from "./result.js";
 import { describe, ident } from "./shape.js";
 import { NotebookFile } from "./store.js";
 import { explorer } from "./ui/explorer.js";
 import { mono, syntax } from "./ui/kit.js";
 import { page } from "./ui/page.js";
+import { preparations } from "./ui/query.js";
 
 const ADMIN_DATABASE = "postgres";
 const SAVE_AFTER_MS = 600;
@@ -50,17 +51,43 @@ async function runPsql(database, sql) {
   return result.stdout;
 }
 
-// For a person's query: psql writes the rows to a file, which skips exec's 8 MiB output cap.
+// Every result open in any pg tab. All of Herdr's mods share one script heap, so the room for
+// results is counted across tabs; module code is shared by every copy of the mod, so this is too.
+const holders = new Set();
+
+const resultsDir = () => `${appHome()}/data/pg`;
+const forget = (file) => (file ? fs.unlink(file).catch(() => {}) : Promise.resolve());
+
+// For a person's query: psql writes the rows to a file, which skips exec's 8 MiB output cap and
+// keeps a result too big for Herdr whole, to save. Returns the file.
 async function runQuery(database, sql) {
-  const dir = `${appHome()}/data/pg`;
+  const dir = resultsDir();
   const file = `${dir}/result-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}.csv`;
   await fs.mkdir(dir, { recursive: true });
   try {
     const result = await exec("psql", psqlArgs(parseServer(currentServer()), database, sql, file), { timeout: QUERY_MS }).catch(execFailed);
     if (result.code !== 0) throw new Error(errorMessage(result.stderr));
-    return await fs.readFile(file, "utf8").catch(() => "");
+    return file;
+  } catch (e) {
+    await forget(file);
+    throw e;
+  }
+}
+
+// The file's size and its text: all of it, or its first READ_BYTES when it is bigger. Herdr's
+// readFile refuses files over 64 MiB, so the start of a big one is copied out with head first.
+async function readStart(file) {
+  const size = await exec("wc", ["-c", file]).catch(() => null);
+  const bytes = size?.code === 0 ? parseInt(size.stdout.trim(), 10) || 0 : 0;
+  if (bytes === 0) return { bytes, text: "", cut: false };
+  if (bytes <= READ_BYTES) return { bytes, text: await fs.readFile(file, "utf8"), cut: false };
+  const start = `${file}.start`;
+  try {
+    const copy = await exec("sh", ["-c", 'head -c "$1" "$2" > "$3"', "sh", String(READ_BYTES), file, start]);
+    if (copy.code !== 0) throw new Error(copy.stderr.trim() || "Could not read the result.");
+    return { bytes, text: await fs.readFile(start, "utf8"), cut: true };
   } finally {
-    await fs.unlink(file).catch(() => {});
+    await forget(start);
   }
 }
 
@@ -68,10 +95,11 @@ const listDatabases = async () => parseDatabases(await runPsql(ADMIN_DATABASE, L
 
 export default class Pg extends View {
   init(_props, cx) {
+    this.startWorker(cx);
     this.server = currentServer();
     // The app refuses an import from another mod folder, so the sidebar panel is a second view of this mod.
     if (props()?.view === "panel") {
-      this.panel = new Panel(listDatabases, cx);
+      this.panel = new Panel(listDatabases, this, cx);
       return;
     }
     this.handle = cx.focus_handle();
@@ -103,12 +131,42 @@ export default class Pg extends View {
     this.filterInput.on("blur", (_e, cx) => { this.typingFilter = false; cx.notify(); });
 
     this.connect(props()?.database ?? null, cx);
+    // Results kept for saving are deleted when their query reruns or the page closes; a crash
+    // leaves them behind, so ones a day old go here.
+    this.spawn(cx, async () => { await exec("find", [resultsDir(), "-name", "result-*", "-mmin", "+1440", "-delete"]).catch(() => {}); });
+  }
+
+  // Every task of this view runs on one worker, started in init. All pg tabs share one script engine,
+  // and code that runs after an await can be inside another tab's call: a task started there belongs
+  // to that tab and redraws it, and naming this view as its owner throws. The worker's cx always
+  // belongs to this view, whichever call wakes it.
+  startWorker(cx) {
+    this.jobs = [];
+    this.wake = null;
+    cx.spawn(async (cx) => {
+      while (!this.closed) {
+        const job = this.jobs.shift();
+        if (job) {
+          Promise.resolve().then(() => job(cx)).catch((e) => console.error(e));
+          continue;
+        }
+        await new Promise((resolve) => { this.wake = resolve; });
+      }
+    });
+  }
+
+  spawn(_cx, job) {
+    this.jobs.push(job);
+    const wake = this.wake;
+    this.wake = null;
+    wake?.();
   }
 
   async close() {
+    this.closed = true;
+    this.wake?.();
     if (this.panel) return;
-    await this.file?.save();
-    this.releaseCells();
+    await Promise.all([this.file?.save(), this.releaseCells()]);
   }
 
   // ── Server and databases ───────────────────────────────────────────────────
@@ -130,7 +188,7 @@ export default class Pg extends View {
     const server = currentServer();
     if (server === this.server) return;
     this.server = server;
-    cx.spawn(async (cx) => {
+    this.spawn(cx, async (cx) => {
       // This call comes from render, and cx.notify() throws in render. The sleep leaves that phase.
       await cx.sleep(0);
       if (this.panel) this.panel.reconnect(cx);
@@ -149,7 +207,7 @@ export default class Pg extends View {
 
   loadDatabases(cx) {
     const load = this.load;
-    cx.spawn(async (cx) => {
+    this.spawn(cx, async (cx) => {
       try {
         const list = await listDatabases();
         if (load !== this.load) return;
@@ -188,7 +246,7 @@ export default class Pg extends View {
   loadTables(cx) {
     const { db, load } = this;
     this.loadingTables = true;
-    cx.spawn(async (cx) => {
+    this.spawn(cx, async (cx) => {
       const [tables, stats] = await Promise.allSettled([runPsql(db, LIST_TABLES_SQL), runPsql(db, STATS_SQL)]);
       if (load !== this.load || db !== this.db) return;
       this.tables = tables.status === "fulfilled"
@@ -214,7 +272,7 @@ export default class Pg extends View {
     if (this.tableOpen[key] && !this.columns[key]) {
       const { db, columns } = this;
       columns[key] = { loading: true, list: [] };
-      cx.spawn(async (cx) => {
+      this.spawn(cx, async (cx) => {
         try {
           columns[key] = { loading: false, list: parseColumns(await runPsql(db, columnsSql(table.schema, table.name))) };
         } catch (e) {
@@ -234,7 +292,7 @@ export default class Pg extends View {
     this.closeMenus();
     const file = new NotebookFile(this.server, this.db);
     this.file = file;
-    cx.spawn(async (cx) => {
+    this.spawn(cx, async (cx) => {
       await file.load();
       if (this.file !== file) return;
       this.settle(cx);
@@ -245,7 +303,7 @@ export default class Pg extends View {
 
   // Another tab wrote the file: show what is there now.
   watch(file, cx) {
-    cx.spawn(async (cx) => {
+    this.spawn(cx, async (cx) => {
       while (this.file === file) {
         try { await watchFolder(file.dir); } catch { await cx.sleep(2000); }
         if (this.file !== file) return;
@@ -262,7 +320,7 @@ export default class Pg extends View {
     const file = this.file;
     if (file?.state !== "ready" || !file.change(step)) return;
     const count = file.changes;
-    cx.spawn(async (cx) => {
+    this.spawn(cx, async (cx) => {
       await cx.sleep(SAVE_AFTER_MS);
       if (count !== file.changes) return;
       if ((await file.save()) && this.file === file) {
@@ -320,7 +378,11 @@ export default class Pg extends View {
   // ── Queries ────────────────────────────────────────────────────────────────
 
   makeCell(query) {
-    const cell = { id: query.id, running: false, result: null, error: null, ms: null, token: 0, edWidth: null, focused: false };
+    // `held`: what its result keeps in memory. `cut`: set when the result did not fit, as
+    // { bytes, file, saved, saving, choice: "ask" | "show" | "drop" }; `file` is psql's whole result.
+    // `temp`: psql's file while the result is being read.
+    const cell = { id: query.id, running: false, result: null, error: null, ms: null, token: 0, edWidth: null, focused: false, held: NOTHING, cut: null, temp: null };
+    holders.add(cell);
     cell.editor = EditorState.new({
       language: "sql", value: query.sql, font_family: mono(), font_size: 13.5, line_numbers: false, folding: false, soft_wrap: true, syntax: syntax(theme()),
     });
@@ -337,6 +399,8 @@ export default class Pg extends View {
     const ids = new Set(queries.map((q) => q.id));
     for (const [id, cell] of this.cells) {
       if (ids.has(id)) continue;
+      holders.delete(cell);
+      this.dropResult(cell);
       cell.editor.release();
       this.cells.delete(id);
     }
@@ -348,9 +412,14 @@ export default class Pg extends View {
   }
 
   releaseCells() {
-    for (const cell of this.cells.values()) cell.editor.release();
+    const gone = [...this.cells.values()].map((cell) => {
+      holders.delete(cell);
+      cell.editor.release();
+      return this.dropResult(cell);
+    });
     this.cells.clear();
     this.active = null;
+    return Promise.all(gone);
   }
 
   recordSql(cell, cx) {
@@ -359,27 +428,117 @@ export default class Pg extends View {
     this.change((d) => nb.updateQuery(d, nbId, cell.id, { sql }, now()), cx);
   }
 
+  // Rows go in a slice at a time, while they fit the room other results leave. A result that does
+  // not fit keeps psql's file, and the page asks what to do with it.
   runCell(cell, cx) {
     const source = cell.editor.value().trim();
     if (!source || !this.db) return;
     const { db } = this;
     const token = ++cell.token;
     const start = Date.now();
+    this.dropResult(cell);
     cell.running = true;
     cell.error = null;
     cx.notify();
-    cx.spawn(async (cx) => {
+    this.spawn(cx, async (cx) => {
+      let file = null;
       try {
-        const { header, rows } = parseRows(await runQuery(db, source));
+        file = await runQuery(db, source);
         if (token !== cell.token) return;
-        cell.result = describe(header, rows);
+        cell.temp = file;
+        const { bytes, text, cut } = await readStart(file);
+        const reading = startReading(text, cut);
+        while (!reading.done) {
+          if (token !== cell.token) return;
+          readSlice(reading, roomLeft(this.held(cell)));
+          cell.held = { values: reading.values, chars: reading.chars };
+          await cx.sleep(0);
+        }
+        if (token !== cell.token) return;
+        const result = describe(reading.header, reading.rows);
+        for (const step of preparations(result)) {
+          await cx.sleep(0);
+          if (token !== cell.token) return;
+          step();
+        }
+        cell.result = result;
+        if (!reading.whole) {
+          cell.cut = { bytes, file, saved: null, saving: false, choice: "ask" };
+          file = null;
+        }
       } catch (e) {
         if (token !== cell.token) return;
-        cell.error = messageOf(e);
+        // The engine throws null when it has no memory left even for an error.
+        cell.error = e === null || /out of memory/i.test(messageOf(e))
+          ? "Herdr ran out of memory for this result. Discard other big results, then run it again."
+          : messageOf(e);
         cell.result = null;
+        cell.held = NOTHING;
+      } finally {
+        if (cell.temp === file) cell.temp = null;
+        await forget(file);
       }
       cell.ms = Date.now() - start;
       cell.running = false;
+      cx.notify();
+    });
+  }
+
+  // What every other result in every pg tab keeps in memory, those still being read included.
+  held(except) {
+    let values = 0;
+    let chars = 0;
+    for (const cell of holders) {
+      if (cell === except) continue;
+      values += cell.held.values;
+      chars += cell.held.chars;
+    }
+    return { values, chars };
+  }
+
+  dropResult(cell) {
+    const files = [cell.cut?.file, cell.temp];
+    cell.result = null;
+    cell.held = NOTHING;
+    cell.cut = null;
+    cell.temp = null;
+    return Promise.all(files.map(forget));
+  }
+
+  showFirstRows(cell, cx) {
+    if (cell.cut) cell.cut.choice = "show";
+    cx.notify();
+  }
+
+  discardResult(cell, cx) {
+    const cut = cell.cut;
+    if (!cut) return;
+    this.dropResult(cell);
+    cell.cut = { bytes: cut.bytes, file: null, saved: cut.saved, saving: false, choice: "drop" };
+    cx.notify();
+  }
+
+  // The whole result goes to Downloads, named after the query. psql's file moves there as it is.
+  saveResult(cell, query, cx) {
+    const cut = cell.cut;
+    if (!cut?.file || cut.saving) return;
+    cut.saving = true;
+    cx.notify();
+    this.spawn(cx, async (cx) => {
+      try {
+        const dir = `${home()}/Downloads`;
+        await exec("mkdir", ["-p", dir]);
+        const name = fileName(nb.queryTitle(query));
+        let target = `${dir}/${name}.csv`;
+        for (let n = 2; await fs.exists(target); n++) target = `${dir}/${name} ${n}.csv`;
+        const moved = await exec("mv", ["-n", cut.file, target]);
+        if (moved.code !== 0 || !(await fs.exists(target))) throw new Error(moved.stderr.trim() || `Could not move it to ${target}.`);
+        cut.file = null;
+        cut.saved = target;
+      } catch (e) {
+        notify({ title: "Could not save the result", body: messageOf(e), level: "error" });
+      }
+      cut.saving = false;
       cx.notify();
     });
   }
