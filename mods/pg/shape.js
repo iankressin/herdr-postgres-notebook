@@ -448,14 +448,14 @@ const rolesOf = (result) => memo(result, "roles", () => {
   const labels = all.filter((i) => kinds[i] === "text" && !col(i).idLike && !col(i).code && !col(i).prose && !col(i).url);
   const unique = labels.find((i) => col(i).distinct === col(i).n);
   const label = labels.includes(prof.label) ? prof.label : unique ?? labels[0] ?? -1;
-  return { nums, times, labels, cats: labels.filter((i) => col(i).category), label, rows: result.rows.length };
+  return { kinds, nums, times, labels, cats: labels.filter((i) => col(i).category), label, rows: result.rows.length };
 });
 
 // The steps that parse and group a result for its charts, each one pass over the rows, so the
 // task reading a result can run them one at a time between frames.
 export function chartPreparations(result) {
   const r = rolesOf(result);
-  const axes = new Set([alongAxis(r)?.x, r.label].filter((i) => i >= 0));
+  const axes = new Set([ALONG.any(r)[0], r.label].filter((i) => i >= 0));
   const counted = new Set([r.labels[0], r.cats[0]].filter((i) => i >= 0 && !axes.has(i)));
   return [
     ...[...r.nums, ...r.times.slice(0, 1)].flatMap((i) => parseSteps(result, i)),
@@ -464,20 +464,20 @@ export function chartPreparations(result) {
   ];
 }
 
-const FREE = { axis: null, x: null };
-// The first time column, else the best label, else the first of two or more numbers.
-function alongAxis(r) {
-  if (r.times.length) return { axis: "time", x: r.times[0] };
-  if (r.label >= 0) return { axis: "label", x: r.label };
-  if (r.nums.length >= 2) return { axis: "number", x: r.nums[0] };
-  return null;
-}
-const byLabel = (r) => (r.label >= 0 ? { axis: "label", x: r.label } : null);
-const continuous = (r) => {
-  const a = alongAxis(r);
-  return a && a.axis !== "label" ? a : null;
+// The columns a chart can run along, its usual one first: the first time column, else the best
+// label, else the first of two or more numbers. A number is an x only when another is left to draw.
+const labelsFirst = (r) => (r.label >= 0 ? [r.label, ...r.labels.filter((i) => i !== r.label)] : []);
+const twoNumbers = (r) => (r.nums.length >= 2 ? r.nums : []);
+const ALONG = {
+  label: labelsFirst,
+  any: (r) => [...r.times, ...labelsFirst(r), ...twoNumbers(r)],
+  continuous: (r) => [...r.times, ...twoNumbers(r)],
+  counting: (r) => [...r.labels, ...r.times],
+  // A scatter's usual x is the first number that is not its measure.
+  numbers: (r, m) => [...r.nums.filter((i) => i !== m), ...r.nums.filter((i) => i === m)],
+  none: () => [null],
 };
-const counting = (r) => (r.labels.length ? { axis: "label", x: r.labels[0] } : r.times.length ? { axis: "time", x: r.times[0] } : null);
+const axisOf = (r, x) => (x === null ? null : r.kinds[x] === "time" ? "time" : r.kinds[x] === "number" ? "number" : "label");
 
 const lower = (h, i) => words(h[i]).toLowerCase();
 function namesOf(h, cols) {
@@ -488,54 +488,63 @@ function namesOf(h, cols) {
 const byX = (p, h) => `${namesOf(h, p.series)} by ${lower(h, p.x)}`;
 
 // Every chart a person can pick, in the picker's order. `numbers` says what the chips under the
-// picker choose: one measure, many series, or none. `place` finds the x, `need` is how many
-// numbers it needs besides the x, `pick` settles columns that depend on the measure.
+// picker choose: one measure, many series, or none. `along` lists the columns it can run along,
+// `need` is how many numbers it needs besides the x, `pick` settles columns that depend on the
+// measure.
 export const CHARTS = [
-  { key: "bars", name: "Bars", numbers: "one", place: byLabel, need: 1, title: byX, data: (res, p) => barsData(res, p, sumsOf(res, p.x, p.y).sum) },
-  { key: "columns", name: "Columns", numbers: "one", place: alongAxis, need: 1, title: byX, data: (res, p) => columnsData(res, p, "plain") },
-  { key: "stacked", name: "Stacked columns", numbers: "many", place: alongAxis, need: 2, title: byX, data: (res, p) => columnsData(res, p, "stacked") },
-  { key: "grouped", name: "Grouped columns", numbers: "many", place: alongAxis, need: 2, title: byX, data: (res, p) => columnsData(res, p, "grouped") },
-  { key: "share", name: "100% bars", numbers: "many", place: byLabel, need: 2, title: (p, h) => `Share of ${namesOf(h, p.series).toLowerCase()} by ${lower(h, p.x)}`, data: shareData },
-  { key: "line", name: "Line", numbers: "many", place: alongAxis, need: 1, title: byX, data: (res, p) => lineData(res, p, MEAN) },
-  { key: "area", name: "Area", numbers: "one", place: alongAxis, need: 1, title: byX, data: (res, p) => lineData(res, p, MEAN) },
-  { key: "step", name: "Step", numbers: "many", place: alongAxis, need: 1, title: byX, data: (res, p) => lineData(res, p, LAST) },
-  { key: "total", name: "Running total", numbers: "one", place: continuous, need: 1, title: (p, h) => `Running total of ${lower(h, p.y)} by ${lower(h, p.x)}`, data: (res, p) => lineData(res, p, TOTAL) },
+  { key: "bars", name: "Bars", numbers: "one", along: ALONG.label, need: 1, title: byX, data: (res, p) => barsData(res, p, sumsOf(res, p.x, p.y).sum) },
+  { key: "columns", name: "Columns", numbers: "one", along: ALONG.any, need: 1, title: byX, data: (res, p) => columnsData(res, p, "plain") },
+  { key: "stacked", name: "Stacked columns", numbers: "many", along: ALONG.any, need: 2, title: byX, data: (res, p) => columnsData(res, p, "stacked") },
+  { key: "grouped", name: "Grouped columns", numbers: "many", along: ALONG.any, need: 2, title: byX, data: (res, p) => columnsData(res, p, "grouped") },
+  { key: "share", name: "100% bars", numbers: "many", along: ALONG.label, need: 2, title: (p, h) => `Share of ${namesOf(h, p.series).toLowerCase()} by ${lower(h, p.x)}`, data: shareData },
+  { key: "line", name: "Line", numbers: "many", along: ALONG.any, need: 1, title: byX, data: (res, p) => lineData(res, p, MEAN) },
+  { key: "area", name: "Area", numbers: "one", along: ALONG.any, need: 1, title: byX, data: (res, p) => lineData(res, p, MEAN) },
+  { key: "step", name: "Step", numbers: "many", along: ALONG.any, need: 1, title: byX, data: (res, p) => lineData(res, p, LAST) },
+  { key: "total", name: "Running total", numbers: "one", along: ALONG.continuous, need: 1, title: (p, h) => `Running total of ${lower(h, p.y)} by ${lower(h, p.x)}`, data: (res, p) => lineData(res, p, TOTAL) },
   {
-    key: "scatter", name: "Scatter", numbers: "one", place: () => FREE, need: 2, measureAt: 1,
-    pick: (p, r) => ({ ...p, axis: "number", x: p.options.find((i) => i !== p.y), group: r.cats[0] ?? null }),
+    key: "scatter", name: "Scatter", numbers: "one", along: ALONG.numbers, need: 1, against: true,
+    pick: (p, r) => ({ ...p, group: r.cats[0] ?? null }),
     title: (p, h) => `${words(h[p.y])} against ${lower(h, p.x)}`, data: dotsData,
   },
   {
-    key: "bubbles", name: "Bubbles", numbers: "one", place: () => FREE, need: 3, measureAt: 1,
-    pick: (p, r) => {
-      const x = p.options.find((i) => i !== p.y);
-      return { ...p, axis: "number", x, size: p.options.find((i) => i !== p.y && i !== x), group: r.cats[0] ?? null };
-    },
+    key: "bubbles", name: "Bubbles", numbers: "one", along: ALONG.numbers, need: 2, against: true,
+    pick: (p, r) => ({ ...p, size: p.options.find((i) => i !== p.y), group: r.cats[0] ?? null }),
     title: (p, h) => `${words(h[p.y])} against ${lower(h, p.x)}, sized by ${lower(h, p.size)}`, data: dotsData,
   },
-  { key: "histogram", name: "Histogram", numbers: "one", place: () => FREE, need: 1, title: (p, h) => `Spread of ${lower(h, p.y)}`, data: histogramData },
-  { key: "count", name: "Count", numbers: "none", place: counting, need: 0, title: (p, h) => `Rows by ${lower(h, p.x)}`, data: countData },
+  { key: "histogram", name: "Histogram", numbers: "one", along: ALONG.none, need: 1, title: (p, h) => `Spread of ${lower(h, p.y)}`, data: histogramData },
+  { key: "count", name: "Count", numbers: "none", along: ALONG.counting, need: 0, title: (p, h) => `Rows by ${lower(h, p.x)}`, data: countData },
   {
-    key: "tiles", name: "Big numbers", numbers: "none", place: (r) => (r.rows === 1 ? FREE : null), need: 1,
+    key: "tiles", name: "Big numbers", numbers: "none", along: (r) => (r.rows === 1 ? [null] : []), need: 1,
     pick: (p) => ({ ...p, series: p.options.slice(0, MAX_TILES) }), title: () => null, data: tilesData,
   },
-  { key: "bartable", name: "Table with bars", numbers: "one", place: byLabel, need: 2, title: byX, data: barTableData },
+  { key: "bartable", name: "Table with bars", numbers: "one", along: ALONG.label, need: 2, title: byX, data: barTableData },
 ];
 const CHART = new Map(CHARTS.map((c) => [c.key, c]));
 
 // What Automatic picks: the first chart here that fits and meets its condition.
 const AUTO = [["tiles"], ["columns", (r) => r.times.length > 0], ["bars"], ["scatter"], ["histogram"], ["count"]];
 
-const optionsOf = (r, place) => r.nums.filter((i) => i !== place.x);
+// The saved x and measure as column indexes, -1 when unset or gone.
+const wanted = (result, choice) => ({ want: result.header.indexOf(choice?.x ?? null), m: result.header.indexOf(choice?.measure ?? null) });
 
-function fits(chart, r) {
-  const place = chart.place(r);
-  return place !== null && optionsOf(r, place).length >= chart.need;
+// Where a chart runs along: the chosen column when the chart can use it, else its usual one. The
+// numbers left over are what it can draw.
+function placeOf(chart, r, want, m) {
+  const xs = chart.along(r, m);
+  if (xs.length === 0) return null;
+  const x = xs.includes(want) ? want : xs[0];
+  return { xs, x, options: r.nums.filter((i) => i !== x) };
 }
 
-export const chartChoices = (result) => {
+function fits(chart, r, want, m) {
+  const place = placeOf(chart, r, want, m);
+  return place !== null && place.options.length >= chart.need;
+}
+
+export const chartChoices = (result, choice = {}) => {
   const r = rolesOf(result);
-  return CHARTS.filter((c) => fits(c, r)).map((c) => c.key);
+  const { want, m } = wanted(result, choice);
+  return CHARTS.filter((c) => fits(c, r, want, m)).map((c) => c.key);
 };
 
 export const chartName = (key) => CHART.get(key)?.name ?? null;
@@ -559,21 +568,22 @@ function colorsOf(series, options) {
 }
 
 // The chart to draw and the columns it uses. `choice` holds the saved `chart` (a key, or null for
-// Automatic), `measure` (a column name) and `series` (column names). A saved chart that does not
-// fit falls back to Automatic and is named in `refused`.
+// Automatic), `x`, `measure` (column names) and `series` (column names). A saved chart that does
+// not fit falls back to Automatic and is named in `refused`. `xs` are the columns it could run
+// along instead, `against` says the x is a second number rather than what the values are by.
 export function plan(result, choice = {}) {
   const r = rolesOf(result);
+  const { want, m } = wanted(result, choice);
   const asked = CHART.get(choice?.chart) ?? null;
-  const chart = asked && fits(asked, r) ? asked : automatic(r);
+  const chart = asked && fits(asked, r, want, m) ? asked : automatic(r, want, m);
   if (!chart) return null;
-  const place = chart.place(r);
-  const options = optionsOf(r, place);
+  const { xs, x, options } = placeOf(chart, r, want, m);
   const h = result.header;
   let p = { type: chart.key, numbers: chart.numbers, auto: chart !== asked, refused: asked && chart !== asked ? asked.key : null,
-    axis: place.axis, x: place.x, y: null, series: [], colors: [], size: null, group: null, options };
+    axis: axisOf(r, x), x, xs: xs.filter((i) => i !== null), against: Boolean(chart.against),
+    y: null, series: [], colors: [], size: null, group: null, options };
   if (chart.numbers === "one") {
-    const m = h.indexOf(choice?.measure ?? null);
-    p.y = options.includes(m) ? m : options[chart.measureAt ?? 0];
+    p.y = options.includes(m) ? m : options[0];
     p.series = [p.y];
   }
   if (chart.numbers === "many") p.series = chosenSeries(h, options, choice?.series);
@@ -582,10 +592,10 @@ export function plan(result, choice = {}) {
   return p;
 }
 
-function automatic(r) {
+function automatic(r, want, m) {
   for (const [key, when] of AUTO) {
     const chart = CHART.get(key);
-    if (fits(chart, r) && (!when || when(r))) return chart;
+    if (fits(chart, r, want, m) && (!when || when(r))) return chart;
   }
   return null;
 }
@@ -613,6 +623,18 @@ export const chartData = (result, p) => memo(result, chartKey(p), () => CHART.ge
 export const chartDrawn = (result, p) => derived.get(result)?.has(chartKey(p)) ?? false;
 
 const figure = (v) => formatNumber(String(Math.round(v * 100) / 100));
+
+// Where a y axis of `height` px puts its labels: top, middle and bottom, or, when the values cross
+// zero, top, zero and bottom, so the axis names the zero line. A zero within `room` px of either
+// end has no label of its own, so it never overlaps the end's.
+export function yTicks(lo, hi, height, room = 14) {
+  if (lo < 0 && hi > 0) {
+    const zero = (hi / (hi - lo)) * height;
+    const middle = zero >= room && zero <= height - room ? [{ value: 0, top: zero, zero: true }] : [];
+    return [{ value: hi, top: 0 }, ...middle, { value: lo, top: height }];
+  }
+  return [{ value: hi, top: 0 }, { value: (hi + lo) / 2, top: height / 2 }, { value: lo, top: height }];
+}
 
 function bounds(values, withZero) {
   let lo = withZero ? 0 : Infinity;

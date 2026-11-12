@@ -56,11 +56,21 @@ test("file: a document round-trips through serialize and parse", () => {
   assert.deepEqual(parseDoc(serialize(doc)).doc, doc);
 });
 
-test("file: a query's chart and series round-trip, and a new query has neither", () => {
-  assert.deepEqual([newQuery("q_x", "select 1").chart, newQuery("q_x", "select 1").series], [null, null]);
-  const doc = updateQuery(sample(), "n_daily", "q_1", { chart: "stacked", series: ["revenue", "cost"] }, NOW);
+test("file: a query's chart, x and series round-trip, and a new query has none", () => {
+  const fresh = newQuery("q_x", "select 1");
+  assert.deepEqual([fresh.chart, fresh.x, fresh.series], [null, null, null]);
+  const doc = updateQuery(sample(), "n_daily", "q_1", { chart: "stacked", x: "region", series: ["revenue", "cost"] }, NOW);
   const read = parseDoc(serialize(doc)).doc.notebooks.find((n) => n.id === "n_daily").queries[0];
-  assert.deepEqual([read.chart, read.series], ["stacked", ["revenue", "cost"]]);
+  assert.deepEqual([read.chart, read.x, read.series], ["stacked", "region", ["revenue", "cost"]]);
+});
+
+test("file: an x that is not text reads as null", () => {
+  const raw = JSON.parse(serialize(sample()));
+  const query = raw.notebooks.find((n) => n.id === "n_daily").queries[0];
+  for (const x of [5, ["day"], { a: 1 }, undefined]) {
+    query.x = x;
+    assert.equal(parseDoc(JSON.stringify(raw)).doc.notebooks.find((n) => n.id === "n_daily").queries[0].x, null);
+  }
 });
 
 test("file: a chart that is not text or series that are not a list of text read as null", () => {

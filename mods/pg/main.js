@@ -634,6 +634,13 @@ export default class Pg extends View {
     cx.notify();
   }
 
+  // `x` is the column the chart runs along, by name; null is the chart's usual one.
+  setX(query, x, cx) {
+    const { nbId } = this;
+    this.change((d) => nb.updateQuery(d, nbId, query.id, { x }, now()), cx);
+    cx.notify();
+  }
+
   // Starts from the series drawn now, so the first click keeps the default ones. Turning off the
   // last series, or on a seventh, does nothing.
   toggleSeries(query, name, cx) {

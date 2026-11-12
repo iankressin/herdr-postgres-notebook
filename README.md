@@ -31,7 +31,7 @@ Limits:
 
 ## Charts
 
-A result that charts well opens as a chart. A row of buttons above it picks the chart: **Auto**, or any type that fits the result. There are 15: bars, columns, stacked columns, grouped columns, 100% bars, line, area, step, running total, scatter, bubbles, histogram, count, big numbers, and a table with bars. A chart of one number lets you pick which one. A chart of several lets you turn each on and off. Your choices are saved with the query.
+A result that charts well opens as a chart. A row of buttons above it picks the chart: **Auto**, or any type that fits the result. There are 15: bars, columns, stacked columns, grouped columns, 100% bars, line, area, step, running total, scatter, bubbles, histogram, count, big numbers, and a table with bars. A chart of one number lets you pick which one. A chart of several lets you turn each on and off. **By** chips pick the column a chart runs along. Your choices are saved with the query.
 
 ## What it does to your machine
 

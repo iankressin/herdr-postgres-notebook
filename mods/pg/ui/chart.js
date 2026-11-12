@@ -3,7 +3,7 @@
 // of CHARTS.
 import { Background, PathBuilder, div } from "gpui-kit";
 import { h_flex, v_flex } from "gpui-base";
-import { MAX_SERIES, chartChoices, chartData, chartDrawn, chartName, chartTitle, compact, formatNumber, plan, words } from "../shape.js";
+import { MAX_SERIES, chartChoices, chartData, chartDrawn, chartName, chartTitle, compact, formatNumber, plan, words, yTicks } from "../shape.js";
 import { alpha, icon, mono } from "./kit.js";
 
 const H = 220;
@@ -19,15 +19,19 @@ const colorOf = (slot, t) => (slot >= 0 ? t[PALETTE[slot]] : t.dim);
 const pct = (f) => `${(f * 100).toFixed(3)}%`;
 const quiet = (text, t) => div().py(24).text_size(13).text_color(t.muted).child(text);
 
+// Each label is a 14px line centered on its gridline, kept inside the axis.
 function yAxis(lo, hi, t) {
-  return v_flex().w(52).flex_none().h(H).justify_between().items_end().pr(8).text_size(11).font_family(mono()).text_color(t.dim)
-    .child(div().child(compact(hi))).child(div().child(compact((hi + lo) / 2))).child(div().child(compact(lo)));
+  return div().w(52).flex_none().h(H).relative().text_size(11).font_family(mono()).text_color(t.dim)
+    .children(yTicks(lo, hi, H).map((tick) => div().absolute().left(0).right(8).h(14).text_right()
+      .top(Math.min(H - 14, Math.max(0, Math.round(tick.top - 7))))
+      .child(compact(tick.value))));
 }
 
-// Hairlines at the top, middle and bottom, and a stronger one at zero when the values cross it.
+// A hairline at each label, and a stronger one at zero when the values cross it.
 function grid(lo, hi, t) {
-  const lines = [0, 0.5, 1].map((f) => div().absolute().left(0).right(0).top(Math.round(f * (H - 1))).h(1).bg(alpha(t.foreground, 0.07)));
-  if (lo < 0 && hi > 0) lines.push(div().absolute().left(0).right(0).top(Math.round((hi / (hi - lo)) * (H - 1))).h(1).bg(alpha(t.foreground, 0.2)));
+  const line = (top, strength) => div().absolute().left(0).right(0).top(Math.min(H - 1, Math.round(top))).h(1).bg(alpha(t.foreground, strength));
+  const lines = yTicks(lo, hi, H).filter((tick) => !tick.zero).map((tick) => line(tick.top, 0.07));
+  if (lo < 0 && hi > 0) lines.push(line((hi / (hi - lo)) * H, 0.2));
   return lines;
 }
 
@@ -335,7 +339,7 @@ function typePicker(view, query, result, p, t) {
     .when(active !== null, (e) => e.text_color(t.muted).hover((st) => st.bg(t.hover)))
     .on_click((_e, cx) => view.setChart(query, null, cx))
     .child("Auto");
-  return h_flex().gap(2).items_center().child(chip).children(chartChoices(result).map((key) => {
+  return h_flex().gap(2).items_center().child(chip).children(chartChoices(result, query).map((key) => {
     const on = key === active;
     return div().id(`pg-chart-${query.id}-${key}`).w(26).h(24).flex_none().flex().items_center().justify_center().rounded(7).cursor_pointer()
       .when(on, (e) => e.bg(t.selected))
@@ -346,6 +350,8 @@ function typePicker(view, query, result, p, t) {
   }));
 }
 
+const heading = (text, t) => div().pr(6).text_size(12).text_color(t.dim).child(text);
+
 const numberChip = (id, on, t) => h_flex().id(id).h(24).px(9).gap(6).items_center().rounded(7).cursor_pointer().text_size(12)
   .when(on, (e) => e.bg(t.selected).text_color(t.foreground))
   .when(!on, (e) => e.text_color(t.muted).hover((st) => st.bg(t.hover)));
@@ -355,13 +361,12 @@ const numberChip = (id, on, t) => h_flex().id(id).h(24).px(9).gap(6).items_cente
 function numberPicker(view, query, result, p, t) {
   const h = result.header;
   if (p.numbers === "none" || p.options.length <= 1) return null;
-  const heading = (text) => div().pr(6).text_size(12).text_color(t.dim).child(text);
   if (p.numbers === "one") {
-    return h_flex().gap(2).items_center().child(heading("Measure")).children(p.options.map((i) => numberChip(`pg-measure-${query.id}-${i}`, i === p.y, t)
+    return h_flex().gap(2).items_center().child(heading("Measure", t)).children(p.options.map((i) => numberChip(`pg-measure-${query.id}-${i}`, i === p.y, t)
       .on_click((_e, cx) => view.setMeasure(query, h[i], cx))
       .child(h[i])));
   }
-  return h_flex().flex_wrap().gap(2).items_center().child(heading("Numbers")).children(p.options.map((i, k) => {
+  return h_flex().flex_wrap().gap(2).items_center().child(heading("Numbers", t)).children(p.options.map((i, k) => {
     const at = p.series.indexOf(i);
     const slot = at >= 0 ? p.colors[at] : k < MAX_SERIES ? k : -1;
     return numberChip(`pg-series-${query.id}-${i}`, at >= 0, t)
@@ -371,11 +376,22 @@ function numberPicker(view, query, result, p, t) {
   }));
 }
 
+// The column the chart runs along, when it could run along more than one.
+function xPicker(view, query, result, p, t) {
+  if (p.xs.length <= 1) return null;
+  const h = result.header;
+  return h_flex().flex_wrap().gap(2).items_center().child(heading(p.against ? "Against" : "By", t))
+    .children(p.xs.map((i) => numberChip(`pg-x-${query.id}-${i}`, i === p.x, t)
+      .on_click((_e, cx) => view.setX(query, h[i], cx))
+      .child(h[i])));
+}
+
 export function chart(view, query, result, t) {
   const p = plan(result, query);
   if (!p) return quiet("Nothing to chart here: the result has no numbers, dates or repeated labels.", t);
   const { data, state } = dataFor(view, result, p);
   const title = chartTitle(p, result.header);
+  const along = xPicker(view, query, result, p, t);
   const numbers = numberPicker(view, query, result, p, t);
   let body;
   if (state === "failed") body = quiet("This chart could not be drawn.", t);
@@ -386,6 +402,7 @@ export function chart(view, query, result, t) {
     .child(h_flex().flex_wrap().gap(10).items_center()
       .child(typePicker(view, query, result, p, t))
       .child(div().flex_1())
+      .when(Boolean(along), (e) => e.child(along))
       .when(Boolean(numbers), (e) => e.child(numbers)))
     .when(Boolean(p.refused), (e) => e.child(div().text_size(12).text_color(t.dim).child(`${chartName(p.refused)} does not fit this result.`)))
     .when(Boolean(title) || Boolean(data?.note), (e) => e.child(h_flex().gap(12).items_baseline()

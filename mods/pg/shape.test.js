@@ -1,7 +1,7 @@
 // Run with: cd ~/.config/herdr-app/mods/pg && node --test
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { CELL_CHARS, chartChoices, chartData, chartPreparations, defaultView, describe, formatNumber, plan, summarize, toggledSeries } from "./shape.js";
+import { CELL_CHARS, chartChoices, chartData, chartPreparations, defaultView, describe, formatNumber, plan, summarize, toggledSeries, yTicks } from "./shape.js";
 
 const at = (day, hour = 0) => `2026-01-${String(day).padStart(2, "0")} ${String(hour).padStart(2, "0")}:00:00+00`;
 const hours = (i) => new Date(Date.UTC(2026, 0, 1) + i * 3600000).toISOString().replace("T", " ").replace(".000Z", "+00");
@@ -87,7 +87,7 @@ test("choices: a label and one number", () => {
 });
 
 test("choices: a label and two numbers add the many-number charts and the table with bars", () => {
-  assert.deepEqual(choicesOf("labelTwo"), ["bars", "columns", "stacked", "grouped", "share", "line", "area", "step", "scatter", "histogram", "count", "bartable"]);
+  assert.deepEqual(choicesOf("labelTwo"), ["bars", "columns", "stacked", "grouped", "share", "line", "area", "step", "total", "scatter", "histogram", "count", "bartable"]);
 });
 
 test("choices: bubbles need three numbers, and a running total a time or number axis", () => {
@@ -95,7 +95,60 @@ test("choices: bubbles need three numbers, and a running total a time or number 
   assert.ok(!choicesOf("labelTwo").includes("bubbles"));
   assert.ok(choicesOf("timeOne").includes("total"));
   assert.ok(choicesOf("threeNumbers").includes("total"), "the first number is the x");
-  assert.ok(!choicesOf("labelTwo").includes("total"));
+  assert.ok(choicesOf("labelTwo").includes("total"), "along a number, even beside a label");
+  assert.ok(!choicesOf("labelOne").includes("total"), "one number cannot be both the x and the value");
+});
+
+test("y axis: values crossing zero label the zero line instead of the midpoint", () => {
+  assert.deepEqual(yTicks(-610, 510, 220).map((t) => [t.value, Math.round(t.top)]), [[510, 0], [0, 100], [-610, 220]]);
+  assert.deepEqual(yTicks(0, 40, 220).map((t) => [t.value, t.top]), [[40, 0], [20, 110], [0, 220]], "no negatives: top, middle, bottom");
+  assert.deepEqual(yTicks(-1, 400, 220).map((t) => t.value), [400, -1], "a zero next to an end is left to the gridline");
+});
+
+const MIXED = [["day", "region", "sales", "cost"], [[at(1), "north", "10", "4"], [at(2), "south", "20", "9"], [at(3), "north", "5", "1"]]];
+
+test("x: a chosen column the chart can run along is its x, with that column's kind of axis", () => {
+  const along = (choice) => {
+    const p = planOf(...MIXED, choice);
+    return { type: p.type, axis: p.axis, x: p.x, y: p.y };
+  };
+  assert.deepEqual(along({ chart: "columns" }), { type: "columns", axis: "time", x: 0, y: 2 });
+  assert.deepEqual(along({ chart: "columns", x: "region" }), { type: "columns", axis: "label", x: 1, y: 2 });
+  assert.deepEqual(along({ chart: "columns", x: "sales" }), { type: "columns", axis: "number", x: 2, y: 3 }, "a number as x is no longer a value");
+  assert.deepEqual(along({ chart: "bars", x: "day" }), { type: "bars", axis: "label", x: 1, y: 2 }, "bars run along labels only");
+  assert.deepEqual(along({ chart: "columns", x: "refunds" }), { type: "columns", axis: "time", x: 0, y: 2 }, "an unknown name falls back");
+  assert.deepEqual(along({ x: "region" }), { type: "columns", axis: "label", x: 1, y: 2 }, "Automatic uses it too");
+});
+
+test("x: each chart lists the columns it can run along, its usual one first", () => {
+  assert.deepEqual(planOf(...MIXED, { chart: "columns" }).xs, [0, 1, 2, 3]);
+  assert.deepEqual(planOf(...MIXED, { chart: "bars" }).xs, [1]);
+  assert.deepEqual(planOf(...MIXED, { chart: "total" }).xs, [0, 2, 3]);
+  assert.deepEqual(planOf(...MIXED, { chart: "count" }).xs, [1, 0]);
+  assert.deepEqual(planOf(...MIXED, { chart: "histogram" }).xs, []);
+});
+
+test("x: columns along a chosen label sum each label's rows, in first-seen order", () => {
+  const { d } = drawn(...MIXED, { chart: "columns", x: "region" });
+  assert.deepEqual(d.points.map((pt) => pt.label), ["north", "south"]);
+  assert.deepEqual(columnValues(d), [15, 20]);
+});
+
+test("x: a scatter runs against the chosen number, and its measure is one of the others", () => {
+  const scatter = (choice) => {
+    const p = planOf(...SHAPES.threeNumbers, { chart: "scatter", ...choice });
+    return [p.x, p.y, p.against];
+  };
+  assert.deepEqual(scatter({}), [0, 1, true]);
+  assert.deepEqual(scatter({ x: "c" }), [2, 0, true]);
+  assert.deepEqual(scatter({ x: "c", measure: "b" }), [2, 1, true]);
+  assert.deepEqual(scatter({ x: "b", measure: "b" }), [1, 0, true], "the x cannot also be the measure");
+  assert.deepEqual(scatter({ measure: "a" }), [1, 0, true], "with no x saved, the measure's column is never the x");
+});
+
+test("x: count runs along a chosen time column instead of the label", () => {
+  const p = planOf(...MIXED, { chart: "count", x: "day" });
+  assert.deepEqual([p.axis, p.x], ["time", 0]);
 });
 
 test("choices: stacked, grouped and 100% bars need two numbers besides the x", () => {
