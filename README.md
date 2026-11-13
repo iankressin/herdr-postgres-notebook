@@ -64,4 +64,6 @@ Limits:
 cd mods/pg && node --test
 ```
 
-The font, Source Serif 4, is © Adobe and licensed under the SIL Open Font License (`mods/pg/fonts/OFL.md`).
+## License
+
+MIT (`LICENSE`). The font, Source Serif 4, is © Adobe and licensed under the SIL Open Font License (`mods/pg/fonts/OFL.md`).
