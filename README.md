@@ -35,7 +35,7 @@ Limits:
 
 - Only Claude Code has been tested end to end. The first time, Claude Code asks whether to trust the mod's work folder, `~/.config/herdr-app/data/pg/ai`; the line says it "has not started", and **Open** shows the question. Other agents may ask before they run psql.
 - An answer took 15 to 20 seconds in our tests. The agent reads the schema and checks its query before it answers; a big schema takes longer.
-- The agent has a shell. Only its brief and the read-only connection string keep it from writing to the database, and the session's read-only setting is a default, not a lock (see below). For a database that matters, connect as a role that can only read: on Postgres 14 or later, one granted `pg_read_all_data` and nothing more.
+- The agent has a shell. Only its brief and the read-only connection string keep it from writing to the database, and the session's read-only setting is a default, not a lock (see below). For a database that matters, connect as a role that can only read: on Postgres 14 or later, one granted `pg_read_all_data` and nothing more. Keep the passwords of stronger roles on that server out of `~/.pgpass` too: Claude Code may run any psql command without asking, and psql takes passwords from that file, so the agent can connect as any role it finds there.
 
 ## What it does to your machine
 
