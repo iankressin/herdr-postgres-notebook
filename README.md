@@ -58,11 +58,15 @@ Limits:
 
 `RECIPE.md` describes the mod in full, for anyone who wants to build it again from scratch.
 
-## Tests
+## Development
 
 ```sh
-cd mods/pg && node --test
+cd mods/pg
+npm ci
+npm run check
 ```
+
+The mod is organized into application, PostgreSQL, notebooks, results, charts, AI, runtime, and UI modules. See the [development guide](mods/pg/README.md), [architecture](mods/pg/docs/architecture.md), and [contributing guide](mods/pg/CONTRIBUTING.md).
 
 ## License
 

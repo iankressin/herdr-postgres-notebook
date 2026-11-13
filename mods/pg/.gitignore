@@ -1,0 +1,20 @@
+node_modules/
+coverage/
+.DS_Store
+*.log
+*.error
+.env
+.env.*
+!.env.example
+.claude/
+.codex/
+.agents/
+
+# Declarations supplied by Herdr on each machine.
+**/gpui-kit.d.ts
+**/herdr.d.ts
+
+# Local design history and session records.
+docs/archive/
+docs/superpowers/
+docs/specification.md
